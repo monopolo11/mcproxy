@@ -16,7 +16,7 @@ import {
   profilePatch,
   compatible,
 } from "./model.js";
-import { Store, hash, token } from "./store.js";
+import { Store, hash } from "./store.js";
 import { localPlatform, Vault, type Platform } from "./platform.js";
 import { OAuth } from "./oauth.js";
 import { ProxySessions, ProxyService } from "./proxy.js";
@@ -318,12 +318,24 @@ export async function createProxyServer(options: ServerOptions = {}) {
             json(res, 200, { profile: storage.view(updated, base) });
             return;
           }
-          if (parts.length === 4 && parts[3] === "token" && method === "POST") {
-            const accessToken = token();
-            storage.update(id, { tokenHash: hash(accessToken) });
-            await sessions.closeProfile(id);
-            json(res, 200, { accessToken });
-            return;
+          if (parts.length === 4 && parts[3] === "token") {
+            if (method === "GET") {
+              // Reading a secret gets the same CSRF marker as mutations.
+              if (req.headers["x-mcproxy-request"] !== "1")
+                throw new AppError(
+                  "request_header",
+                  "X-Mcproxy-Request: 1 is required",
+                  403,
+                );
+              json(res, 200, { accessToken: storage.revealToken(id) });
+              return;
+            }
+            if (method === "POST") {
+              const accessToken = storage.rotateToken(id);
+              await sessions.closeProfile(id);
+              json(res, 200, { accessToken });
+              return;
+            }
           }
           if (parts.length === 4 && parts[3] === "test" && method === "POST") {
             json(res, 200, await sessions.test(p));

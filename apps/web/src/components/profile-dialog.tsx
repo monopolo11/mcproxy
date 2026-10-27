@@ -2,6 +2,7 @@ import { useForm, useSelector } from "@tanstack/react-form"
 import { useNavigate } from "@tanstack/react-router"
 import { PlusIcon, XIcon } from "lucide-react"
 import { useMemo, useRef, useState, type ReactNode } from "react"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -13,7 +14,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { absoluteEndpoint, errorMessage, type Profile, type Provider } from "@/lib/api"
+import { errorMessage, type Profile, type Provider } from "@/lib/api"
 import {
   AUTH_LABELS,
   AUTH_TYPES_BY_TRANSPORT,
@@ -26,13 +27,12 @@ import {
 } from "@/lib/forms"
 import { useCreateProfile, useUpdateProfile } from "@/lib/queries"
 import { describedBy, ErrorText, Field, visibleError } from "./field"
-import { TokenReveal } from "./token-reveal"
 
 type Mode = { kind: "create" } | { kind: "edit"; profile: Profile }
 
 /**
- * Create or edit a profile. Creation ends on the one-time access token view;
- * editing keeps stored upstream credentials unless the user replaces them.
+ * Create or edit a profile. Creation opens the new profile, where the token
+ * can be shown; editing keeps stored upstream credentials unless replaced.
  */
 export function ProfileDialog({
   provider,
@@ -46,42 +46,24 @@ export function ProfileDialog({
   onSaved?: () => void
 }) {
   const [open, setOpen] = useState(false)
-  const [created, setCreated] = useState<{ token: string; endpoint: string }>()
-
-  const onOpenChange = (next: boolean) => {
-    setOpen(next)
-    if (!next) setCreated(undefined)
-  }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>{trigger}</DialogTrigger>
-      <DialogContent
-        aria-describedby={undefined}
-        className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl"
-        // The token view must be dismissed deliberately.
-        onInteractOutside={(event) => created && event.preventDefault()}
-      >
+      <DialogContent aria-describedby={undefined} className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>
-            {created ? "Profile created" : mode.kind === "create" ? `New ${provider.name} profile` : `Edit ${mode.profile.name}`}
+            {mode.kind === "create" ? `New ${provider.name} profile` : `Edit ${mode.profile.name}`}
           </DialogTitle>
         </DialogHeader>
-        {created ? (
-          <>
-            <TokenReveal token={created.token} endpoint={created.endpoint} />
-            <DialogFooter>
-              <Button onClick={() => onOpenChange(false)}>Done</Button>
-            </DialogFooter>
-          </>
-        ) : open ? (
+        {/* Remounting on open resets the form. */}
+        {open ? (
           <ProfileForm
             provider={provider}
             mode={mode}
-            onCreated={setCreated}
-            onSaved={() => {
+            onDone={() => {
               onSaved?.()
-              onOpenChange(false)
+              setOpen(false)
             }}
           />
         ) : null}
@@ -93,13 +75,11 @@ export function ProfileDialog({
 function ProfileForm({
   provider,
   mode,
-  onCreated,
-  onSaved,
+  onDone,
 }: {
   provider: Provider
   mode: Mode
-  onCreated: (result: { token: string; endpoint: string }) => void
-  onSaved: () => void
+  onDone: () => void
 }) {
   const navigate = useNavigate()
   const create = useCreateProfile(provider.id)
@@ -125,12 +105,15 @@ function ProfileForm({
     if (mode.kind === "edit") {
       await update.mutateAsync({ id: mode.profile.id, patch: toProfilePatch(value) })
       update.reset()
-      onSaved()
+      onDone()
       return
     }
-    const { profile, accessToken } = await create.mutateAsync(toProfileInput(value))
+    // The response also carries the token; it is dropped with the mutation and
+    // shown on the profile page on request instead.
+    const { profile } = await create.mutateAsync(toProfileInput(value))
     create.reset()
-    onCreated({ token: accessToken, endpoint: absoluteEndpoint(profile.endpoint) })
+    onDone()
+    toast.success(`${profile.name} created`)
     await navigate({
       to: "/providers/$providerId/profiles/$profileId",
       params: { providerId: provider.id, profileId: profile.id },
@@ -202,7 +185,7 @@ function ProfileForm({
 
       <section aria-labelledby="upstream-heading" className="grid gap-4 border-t pt-4">
         <div className="flex items-center justify-between gap-2">
-          <h3 id="upstream-heading" className="text-sm font-medium">Upstream credentials</h3>
+          <h3 id="upstream-heading" className="font-medium">Upstream credentials</h3>
           {mode.kind === "edit" ? (
             <form.Field name="replaceAuth">
               {(field) => (
@@ -220,7 +203,7 @@ function ProfileForm({
         </div>
 
         {!replaceAuth ? (
-          <p className="text-sm">
+          <p>
             {AUTH_LABELS[mode.kind === "edit" ? mode.profile.authType : authType]}. Stored values stay hidden and unchanged.
           </p>
         ) : (
@@ -327,7 +310,7 @@ function PairsEditor({ form, name }: { form: ProfileForm; name: "headers" | "env
         return (
           <div className="grid gap-2">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">
+              <span className="font-medium">
                 {name === "headers" ? "Upstream headers" : "Upstream environment"}
               </span>
               <Button type="button" variant="ghost" size="xs" onClick={() => setReveal(!reveal)}>
@@ -410,9 +393,7 @@ function PairsEditor({ form, name }: { form: ProfileForm; name: "headers" | "env
 function OAuthFields({ form }: { form: ProfileForm }) {
   return (
     <div className="grid gap-4">
-      <p className="text-sm">
-        Leave blank to use dynamic client registration. Connect after saving.
-      </p>
+      <p>Leave blank to use dynamic client registration. Connect after saving.</p>
       <div className="grid gap-4 sm:grid-cols-2">
         <form.Field name="clientId">
           {(field) => (

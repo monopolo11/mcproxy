@@ -134,7 +134,24 @@ test("stdio preserves tools/resources/prompts, isolates profiles, rotates tokens
       404,
     );
     const pid = Number(await readFile(pidFile, "utf8"));
-    await env.api(`/api/profiles/${a.profile.id}/token`, "POST");
+    assert.ok(a.profile.tokenIssuedAt);
+    const revealed = await env.api(`/api/profiles/${a.profile.id}/token`);
+    assert.equal(revealed.data.accessToken, a.accessToken);
+    assert.equal(
+      (await fetch(`${env.daemon.url}/api/profiles/${a.profile.id}/token`))
+        .status,
+      403,
+      "reveal requires the request marker",
+    );
+    const { data: rotated } = await env.api(
+      `/api/profiles/${a.profile.id}/token`,
+      "POST",
+    );
+    assert.notEqual(rotated.accessToken, a.accessToken);
+    assert.equal(
+      (await env.api(`/api/profiles/${a.profile.id}/token`)).data.accessToken,
+      rotated.accessToken,
+    );
     assert.equal(
       (
         await fetch(a.profile.endpoint, {

@@ -7,13 +7,30 @@ const STATUS = {
   error: { label: "Error", dot: "bg-destructive" },
 } as const satisfies Record<Profile["status"], { label: string; dot: string }>
 
-/** Static status dot, optionally with its label. */
+/** Static 8px dot; no status renders a neutral one. */
+export function StatusDot({ status, className }: { status?: Profile["status"]; className?: string }) {
+  return (
+    <span
+      aria-hidden
+      className={cn("size-2 shrink-0 rounded-full", status ? STATUS[status].dot : "bg-muted-foreground/40", className)}
+    />
+  )
+}
+
+/** Status dot with its label, visible or screen-reader only. */
 export function ProfileStatus({ status, showLabel = false }: { status: Profile["status"]; showLabel?: boolean }) {
-  const { label, dot } = STATUS[status]
+  const { label } = STATUS[status]
   return (
     <span className="inline-flex items-center gap-1.5" title={label}>
-      <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", dot)} />
+      <StatusDot status={status} />
       {showLabel ? <span>{label}</span> : <span className="sr-only">{label}</span>}
     </span>
   )
+}
+
+/** Worst status across a provider's profiles; undefined when it has none. */
+export function aggregateStatus(profiles: readonly Profile[]): Profile["status"] | undefined {
+  if (profiles.some((profile) => profile.status === "error")) return "error"
+  if (profiles.some((profile) => profile.status === "needs_auth")) return "needs_auth"
+  return profiles.length > 0 ? "ready" : undefined
 }

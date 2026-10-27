@@ -4,6 +4,7 @@ import {
   createRoute,
   createRouter,
   Outlet,
+  redirect,
 } from "@tanstack/react-router"
 import { PlusIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -12,10 +13,12 @@ import { Notice } from "@/components/notice"
 import { ProfilePage } from "@/components/profile-page"
 import { ProviderDialog } from "@/components/provider-dialog"
 import { ProviderPage } from "@/components/provider-page"
+import { ClientSettings, DaemonSettings } from "@/components/settings-page"
 import { Sidebar } from "@/components/sidebar"
 import { providersQuery } from "@/lib/queries"
 
-// Code-based routes: providers in the sidebar, profiles nested under a provider.
+// Code-based routes. The sidebar lists every MCP with its profiles, so pages
+// are flat: an MCP, a profile, or a settings section.
 
 const rootRoute = createRootRoute({
   component: () => (
@@ -47,24 +50,45 @@ const providerRoute = createRoute({
   },
 })
 
-const providerIndexRoute = createRoute({
-  getParentRoute: () => providerRoute,
-  path: "/",
-  component: () => <Notice>Select or create a profile.</Notice>,
-})
-
 const profileRoute = createRoute({
-  getParentRoute: () => providerRoute,
-  path: "/profiles/$profileId",
+  getParentRoute: () => rootRoute,
+  path: "/providers/$providerId/profiles/$profileId",
   component: function ProfileRouteComponent() {
     const { providerId, profileId } = profileRoute.useParams()
     return <ProfilePage providerId={providerId} profileId={profileId} />
   },
 })
 
+const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/settings",
+})
+
+const settingsIndexRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "/",
+  beforeLoad: () => {
+    throw redirect({ to: "/settings/daemon" })
+  },
+})
+
+const daemonSettingsRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "/daemon",
+  component: DaemonSettings,
+})
+
+const clientSettingsRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "/clients",
+  component: ClientSettings,
+})
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
-  providerRoute.addChildren([providerIndexRoute, profileRoute]),
+  providerRoute,
+  profileRoute,
+  settingsRoute.addChildren([settingsIndexRoute, daemonSettingsRoute, clientSettingsRoute]),
 ])
 
 export const router = createRouter({ routeTree, defaultPreload: "intent" })
@@ -80,16 +104,16 @@ function Home() {
   if (providers.isSuccess && providers.data.length === 0) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8">
-        <p>No providers yet.</p>
+        <p className="text-muted-foreground">No MCPs yet.</p>
         <ProviderDialog
           trigger={
             <Button size="sm">
-              <PlusIcon /> Add provider
+              <PlusIcon /> Add MCP
             </Button>
           }
         />
       </div>
     )
   }
-  return <Notice>Select a provider.</Notice>
+  return <Notice>Select an MCP.</Notice>
 }
