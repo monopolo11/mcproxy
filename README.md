@@ -9,9 +9,11 @@ pnpm install
 pnpm dev
 ```
 
-Development runs both workspace apps. Vite listens on `127.0.0.1:5173` and proxies `/api`, `/oauth`, and `/mcps`. For production:
+Development runs both workspace apps. Vite listens on `127.0.0.1:5173` and proxies `/api`, `/oauth`, and `/mcps`. For production, check out the latest release and build it; Settings then keeps it updated (see [Releases and updates](#releases-and-updates)):
 
 ```sh
+git checkout "$(gh release view --json tagName --jq .tagName)"
+pnpm install
 pnpm build
 node apps/server/dist/main.js
 ```
@@ -25,7 +27,7 @@ pnpm build
 pnpm service install
 ```
 
-`pnpm service` takes `install`, `uninstall`, `start`, `stop`, `restart` and `status`. It registers a launchd agent on macOS, a systemd user unit on Linux and a `HKCU\...\Run` entry on Windows; none needs elevation. Install records the current `node`, `PATH` and `PORT` (from the shell or `.env`), so stdio profiles find the same commands as the shell that installed it. Install, start and restart refuse while something else listens on the port, such as a foreground `pnpm dev`. Run `pnpm service restart` after `pnpm build`; it keeps the installed definition, so re-run `install` to change `PORT`. On macOS and Linux the daemon comes back after a crash; on every platform `pnpm service stop` keeps it down until the next login. Logs go to `~/Library/Logs/mcproxy/mcproxy.log` on macOS, the user journal on Linux (`journalctl --user -u mcproxy`) and `%LOCALAPPDATA%\mcproxy\mcproxy.log` plus `mcproxy.err.log` on Windows, where they are replaced at each start. Linux install also enables lingering so the daemon starts at boot and survives logout, and prints the `loginctl` command when that needs a password. On Windows a PowerShell window may flash at logon, stop is a forced kill and nothing restarts the daemon after a crash. macOS is verified; Linux and Windows are implemented but not tested here.
+`pnpm service` takes `install`, `uninstall`, `start`, `stop`, `restart` and `status`. It registers a launchd agent on macOS, a systemd user unit on Linux and a `HKCU\...\Run` entry on Windows; none needs elevation. Install records the current `node`, `PATH` and `PORT` (from the shell or `.env`), so stdio profiles find the same commands as the shell that installed it, and updates find `git`, `gh` and `pnpm`. Install, start and restart refuse while something else listens on the port, such as a foreground `pnpm dev`. Run `pnpm service restart` after `pnpm build`; it keeps the installed definition, so re-run `install` to change `PORT`. On macOS and Linux the daemon comes back after a crash; on every platform `pnpm service stop` keeps it down until the next login. Logs go to `~/Library/Logs/mcproxy/mcproxy.log` on macOS, the user journal on Linux (`journalctl --user -u mcproxy`) and `%LOCALAPPDATA%\mcproxy\mcproxy.log` plus `mcproxy.err.log` on Windows, where they are replaced at each start. Linux install also enables lingering so the daemon starts at boot and survives logout, and prints the `loginctl` command when that needs a password. On Windows a PowerShell window may flash at logon, stop is a forced kill and nothing restarts the daemon after a crash. macOS is verified; Linux and Windows are implemented but not tested here.
 
 Behind a TLS-inspecting proxy (Cloudflare WARP, Zscaler, ...) connecting to an HTTPS upstream fails with `SELF_SIGNED_CERT_IN_CHAIN` and the test reports an untrusted certificate. Put the proxy's CA bundle in a `.env` at the repo root, which `pnpm dev` and `pnpm start` load, then restart:
 
@@ -38,6 +40,19 @@ pnpm typecheck
 pnpm build
 pnpm test
 ```
+
+## Releases and updates
+
+Releases are GitHub Releases on tags; the version lives only in the tag, never in `package.json`. `.github/workflows/release.yml` runs typecheck, tests and build, then publishes:
+
+- **Stable**: every push to `main`, tagged with a patch bump of the latest stable (`v0.1.0` first) and marked latest. Notes cover the commits since the previous stable. A commit that already has a stable tag is skipped.
+- **Nightly**: by hand, from Actions > Release > Run workflow, with any branch, tag or commit as `ref` (default `main`), so an unmerged branch can reach nightly testers. Tagged `vX.Y.(Z+1)-nightly.YYYYMMDD.<run>` on top of the latest stable `vX.Y.Z`, published as a prerelease, never latest. Notes cover the changes since the previous nightly.
+
+The daemon's version is the release tag at the checkout's HEAD. A checkout with modified tracked files, or with no release tag at HEAD, is a development build: Settings shows its commit and offers no updates. The exception is a clean checkout of `main`, which is offered the latest stable once that release contains it.
+
+Settings > Daemon shows the version, the channel and any available update. Stable sees stable releases only; nightly sees both and offers the higher. A lower version is never offered, so moving from nightly to stable waits for the next stable newer than the installed nightly. The daemon checks at start and hourly, and the channel is kept in its state. The repo is private, so checks call `gh api` when `gh` is signed in, else use `GH_TOKEN` or `GITHUB_TOKEN` from the environment or `.env`; with neither, Settings says it can't check and why.
+
+Update and restart fetches tags with git's own credentials, checks out the release tag (detached), runs `pnpm install` if the lockfile changed and `pnpm build`, with their output in the daemon log. If any step fails it checks out the previous version, rebuilds it and shows the error. Then the daemon restarts: through the login service when that runs it, otherwise by respawning the same command line in the background, which leaves the terminal that started it; stop that one by pid. A build that succeeds but then fails to start is not rolled back. Migrations run at startup.
 
 Tests use temporary directories, synthetic credentials, an HTTP MCP server, a stdio subprocess and a deterministic OAuth authorization server. They exercise discovery, resources, prompts, two-profile isolation, downstream authentication, token rotation, process cleanup, notifications, server-to-client requests, OAuth state, PKCE, registration and durable refresh after restart.
 
@@ -71,7 +86,7 @@ Tools are the union of the members' tools, renamed `<prefix><tool>`. The prefix 
 
 macOS defaults to `~/Library/Application Support/mcproxy`. Linux uses `$XDG_STATE_HOME/mcproxy` or `~/.local/state/mcproxy`. Windows uses `%LOCALAPPDATA%/mcproxy`. macOS is the verified platform; Linux and Windows paths are implemented but not tested here. `pnpm service install` registers a login service; otherwise run the daemon in the foreground.
 
-`createProxyServer({ stateDir, port: 0, platform, webDir })` in `apps/server/src/server.ts` supports isolated embedding and tests. The returned handle exposes `url`, `port`, `close()` and `sessionCount()`. `Platform` and `CredentialStore` in `platform.ts` make filesystem locations and key storage injectable. The daemon does not launch a browser; service installation lives in `startup.ts`, outside the daemon.
+`createProxyServer({ stateDir, port: 0, platform, webDir, updates })` in `apps/server/src/server.ts` supports isolated embedding and tests. `updates` enables `/api/update` with an `UpdateSource` (`update.ts`); the daemon passes the git checkout it runs from, tests a fake, and embeddings without it report `version: "development"`. The returned handle exposes `url`, `port`, `close()` and `sessionCount()`. `Platform` and `CredentialStore` in `platform.ts` make filesystem locations and key storage injectable. The daemon does not launch a browser; service installation lives in `startup.ts`, outside the daemon, which only asks the service to restart it after an update.
 
 Upstream credentials, OAuth tokens, discovery state, client registration and pending PKCE state use AES-256-GCM encryption in SQLite. The random encryption key is an owner-only `master.key` in an owner-only state directory. The database is owner-only. This default protects against other local users, not compromise of the current user or a backup containing both the key and database. Keychain integration is not implemented. Keep the complete state directory when moving or backing up profiles. Downstream tokens are random 256-bit values. The daemon stores a SHA-256 hash for authentication and a vault-sealed copy so the UI can show the token again; profiles created before that copy existed must rotate before reveal works.
 
@@ -96,6 +111,6 @@ The daemon writes one timestamped line per event to stdout (warnings and errors 
 2026-10-27 12:48:13.643 WARN  [http] request rejected method=POST path=/api/toolkits status=409 code=conflict
 ```
 
-Scopes are `server`, `http` (rejected and failed requests), `proxy` and `toolkit` (sessions opened and closed with a `reason`, upstream connection failures) and `oauth` (authorization, refresh). Profiles show as `provider/profile`. Errors log a code or name such as `TypeError:ECONNREFUSED`, never their message. `src/log.ts` holds the format.
+Scopes are `server`, `http` (rejected and failed requests), `proxy` and `toolkit` (sessions opened and closed with a `reason`, upstream connection failures), `oauth` (authorization, refresh) and `update` (failed checks, updates and restarts). Profiles show as `provider/profile`. Errors log a code or name such as `TypeError:ECONNREFUSED`, never their message. `src/log.ts` holds the format.
 
 Primary-source findings are in [docs/research/proxy-auth.md](docs/research/proxy-auth.md).
