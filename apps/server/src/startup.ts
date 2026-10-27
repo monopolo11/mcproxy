@@ -19,7 +19,7 @@ import { dirname, join, resolve } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { localPlatform, portFromEnv } from "./platform.js";
+import { defaultPort, localPlatform, portFromEnv } from "./platform.js";
 
 export const verbs = [
   "install",
@@ -44,7 +44,7 @@ export interface Target {
   /** PATH the daemon and its stdio children will see. */
   path: string;
   /** PORT override captured at install time. */
-  port?: string;
+  port?: number;
 }
 
 export interface Status {
@@ -63,7 +63,8 @@ interface Manager {
   logs: string;
   /** The PORT recorded in the installed definition, if any. */
   port(): number | undefined;
-  install(): Promise<void>;
+  /** Writes the definition and starts the daemon; may return a hint to print. */
+  install(): Promise<string | undefined>;
   uninstall(): Promise<void>;
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -97,7 +98,7 @@ export function resolveTarget(): Target {
     cwd,
     envFile: join(cwd, ".env"),
     path: process.env.PATH ?? "",
-    port: process.env.PORT ? String(portFromEnv()) : undefined,
+    port: process.env.PORT ? portFromEnv() : undefined,
   };
 }
 
@@ -109,7 +110,7 @@ const daemonArgs = (target: Target) => [
 
 const envOf = (target: Target): Record<string, string> => ({
   PATH: target.path,
-  ...(target.port === undefined ? {} : { PORT: target.port }),
+  ...(target.port === undefined ? {} : { PORT: String(target.port) }),
 });
 
 // macOS: a LaunchAgent. `bootstrap` loads and starts it (RunAtLoad), `bootout`
@@ -177,8 +178,11 @@ function launchd(target: Target): Manager {
     for (let i = 0; i < 50 && (await loaded()); i++) await setTimeout(200);
     if (await loaded()) throw new Error("The service did not stop within 10s");
   };
+  // A crashed job stays loaded while KeepAlive waits to relaunch it; bootstrap
+  // would then fail, so kick it instead.
   const start = async () => {
     if (!existsSync(definition)) throw new Error("Not installed");
+    if (await loaded()) return void (await run("launchctl", ["kickstart", service]));
     await attempt("launchctl", ["enable", service]);
     await run("launchctl", ["bootstrap", domain, definition]);
   };
@@ -191,6 +195,7 @@ function launchd(target: Target): Manager {
       await mkdir(dirname(logs), { recursive: true });
       await writeFile(definition, launchdPlist(target, logs));
       await start();
+      return undefined;
     },
     async uninstall() {
       await stop();
@@ -260,10 +265,9 @@ function systemd(target: Target): Manager {
       await systemctl("daemon-reload");
       await systemctl("enable", systemdUnitName);
       await systemctl("start", systemdUnitName);
-      if ((await attempt("loginctl", ["enable-linger"])) === undefined)
-        console.log(
-          "lingering  off; run `loginctl enable-linger` so the daemon starts at boot and survives logout",
-        );
+      return (await attempt("loginctl", ["enable-linger"])) === undefined
+        ? "lingering  off; run `loginctl enable-linger` so the daemon starts at boot and survives logout"
+        : undefined;
     },
     async uninstall() {
       await attempt("systemctl", ["--user", "disable", "--now", systemdUnitName]);
@@ -271,10 +275,12 @@ function systemd(target: Target): Manager {
       await systemctl("daemon-reload");
     },
     async start() {
+      if (!existsSync(definition)) throw new Error("Not installed");
       await systemctl("start", systemdUnitName);
     },
+    // systemctl fails on a unit it has never loaded, so only stop an installed one.
     async stop() {
-      await systemctl("stop", systemdUnitName);
+      if (existsSync(definition)) await systemctl("stop", systemdUnitName);
     },
     async status() {
       const pid = Number(
@@ -322,11 +328,16 @@ export function windowsScript(target: Target, logFile: string): string {
     "  Where-Object { $_.CommandLine -and $_.CommandLine.Contains($main) })",
     "switch ($Verb) {",
     "  'status' { foreach ($p in $running) { $p.ProcessId } }",
-    "  'stop' { foreach ($p in $running) { Stop-Process -Id $p.ProcessId -Force } }",
+    "  'stop' {",
+    "    foreach ($p in $running) {",
+    "      Stop-Process -Id $p.ProcessId -Force",
+    "      Wait-Process -Id $p.ProcessId -Timeout 10 -ErrorAction SilentlyContinue",
+    "    }",
+    "  }",
     "  'start' {",
     "    if ($running.Count -gt 0) { exit 0 }",
     `    $env:Path = ${q(target.path)}`,
-    ...(target.port === undefined ? [] : [`    $env:PORT = ${q(target.port)}`]),
+    ...(target.port === undefined ? [] : [`    $env:PORT = '${target.port}'`]),
     `    Start-Process -FilePath ${q(target.node)} -ArgumentList @(${args}) \``,
     `      -WorkingDirectory ${q(target.cwd)} -WindowStyle Hidden \``,
     `      -RedirectStandardOutput ${q(logFile)} -RedirectStandardError ${q(logFile.replace(/\.log$/, ".err.log"))}`,
@@ -372,6 +383,7 @@ function windows(target: Target): Manager {
         "/f",
       ]);
       await powershell("start");
+      return undefined;
     },
     async uninstall() {
       await stop();
@@ -435,22 +447,23 @@ export function assertPortFree(port: number) {
  */
 export async function manage(verb: Verb, target = resolveTarget()) {
   const manager = createManager(target);
+  let hint: string | undefined;
   switch (verb) {
     case "install":
       if (!existsSync(join(target.cwd, "apps", "web", "dist", "index.html")))
         throw new Error("Web app is not built; run `pnpm build` first");
       await manager.stop();
-      await assertPortFree(Number(target.port ?? 7433));
-      await manager.install();
+      await assertPortFree(target.port ?? defaultPort);
+      hint = await manager.install();
       break;
     case "restart":
       await manager.stop();
-      await assertPortFree(manager.port() ?? 7433);
+      await assertPortFree(manager.port() ?? defaultPort);
       await manager.start();
       break;
     case "start":
       if ((await manager.status()).pid === undefined) {
-        await assertPortFree(manager.port() ?? 7433);
+        await assertPortFree(manager.port() ?? defaultPort);
         await manager.start();
       }
       break;
@@ -465,6 +478,7 @@ export async function manage(verb: Verb, target = resolveTarget()) {
   console.log(`installed  ${status.installed ? "yes" : "no"}  ${manager.definition}`);
   console.log(`running    ${status.pid === undefined ? "no" : `yes  pid=${status.pid}`}`);
   console.log(`logs       ${manager.logs}`);
+  if (hint !== undefined) console.log(hint);
 }
 
 function escapeXml(text: string) {
