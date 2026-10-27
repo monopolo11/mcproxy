@@ -270,16 +270,18 @@ export class ProxySessions {
     }
     if (req.method === "DELETE" && header) await this.close(header);
   }
+  /** Initializes the upstream as a one-off client, updating profile status. */
   async test(profile: Profile) {
     const generation = this.store.generation(profile.id);
     try {
-      const capabilities = await this.inspect(
-        profile,
-        async (client) => client.getServerCapabilities() ?? {},
-      );
+      const result = await this.inspect(profile, async (client) => {
+        const capabilities = client.getServerCapabilities() ?? {};
+        const tools = capabilities.tools ? await listAllTools(client) : [];
+        return { capabilities, tools };
+      });
       this.store.assertGeneration(profile.id, generation);
       this.store.update(profile.id, { status: "ready" });
-      return { ok: true, message: "Upstream initialized", capabilities };
+      return { ok: true, message: "Upstream initialized", ...result };
     } catch {
       if (
         this.store.generation(profile.id) === generation &&
@@ -290,6 +292,20 @@ export class ProxySessions {
         ok: false,
         message: "Upstream connection or initialization failed",
       };
+    }
+  }
+  /** The upstream's tools, without touching profile status. */
+  async tools(profile: Profile) {
+    try {
+      return await this.inspect(profile, async (client) =>
+        client.getServerCapabilities()?.tools ? listAllTools(client) : [],
+      );
+    } catch {
+      throw new AppError(
+        "upstream_failed",
+        "Upstream connection or initialization failed",
+        502,
+      );
     }
   }
   /** Runs `use` against a short-lived upstream client, always closing it. */
