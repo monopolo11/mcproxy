@@ -32,6 +32,8 @@ export type Profile = {
   oauthStatus?: "idle" | "pending" | "error"
   endpoint: string
   createdAt: string
+  /** Absent for profiles created before tokens were stored for reveal. */
+  tokenIssuedAt?: string
   lastError?: string
 }
 
@@ -136,6 +138,8 @@ export const api = {
     request<undefined>("DELETE", `/api/profiles/${id(profileId)}`),
   rotateToken: (profileId: string) =>
     request<{ accessToken: string }>("POST", `/api/profiles/${id(profileId)}/token`),
+  revealToken: (profileId: string) =>
+    request<{ accessToken: string }>("GET", `/api/profiles/${id(profileId)}/token`),
   startOAuth: (profileId: string) =>
     request<{ authorizationUrl: string }>("POST", `/api/profiles/${id(profileId)}/oauth/start`),
   testProfile: (profileId: string) =>

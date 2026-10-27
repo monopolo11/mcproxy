@@ -24,4 +24,13 @@ export const migrations = [
     CREATE UNIQUE INDEX profiles_provider_slug ON profiles(providerId, slug);
   `,
   },
+  {
+    // Downstream tokens become revealable: the value is sealed with the vault
+    // next to its hash. Profiles created before this stay hash-only until rotated.
+    version: 2,
+    sql: `
+    ALTER TABLE profiles ADD COLUMN tokenSealed TEXT;
+    ALTER TABLE profiles ADD COLUMN tokenIssuedAt TEXT;
+  `,
+  },
 ] as const;

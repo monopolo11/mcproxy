@@ -13,6 +13,7 @@ import { ProfilePage } from "./profile-page"
 vi.mock("@tanstack/react-router", async (original) => ({
   ...await original<typeof import("@tanstack/react-router")>(),
   useNavigate: () => async () => undefined,
+  Link: ({ children }: { children?: React.ReactNode }) => <a>{children}</a>,
 }))
 
 const provider: Provider = {
@@ -48,7 +49,9 @@ afterEach(async () => {
 
 const flush = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)) })
 async function click(label: string) {
-  const button = [...document.querySelectorAll("button")].find((item) => item.textContent?.trim() === label)
+  const button = [...document.querySelectorAll("button")].find(
+    (item) => item.textContent?.trim() === label || item.getAttribute("aria-label") === label,
+  )
   expect(button, `Button ${label}`).toBeDefined()
   await act(async () => button!.click())
   await flush()
@@ -68,6 +71,10 @@ async function chooseAuth(value: string) {
     select!.value = value
     select!.dispatchEvent(new Event("change", { bubbles: true }))
   })
+}
+const renderProfilePage = async () => {
+  await act(async () => root.render(<QueryClientProvider client={client}><ProfilePage providerId={provider.id} profileId={profile.id} /></QueryClientProvider>))
+  await flush()
 }
 
 it("keeps reconnect pending while ready and displays denial or successful completion", async () => {
@@ -105,9 +112,8 @@ it("keeps the stored auth label when cancelling replacement and clears stale con
   vi.mocked(api.listProfiles).mockResolvedValue({ profiles: [stored] })
   vi.spyOn(api, "testProfile").mockResolvedValue({ ok: true, message: "Upstream initialized" })
   vi.spyOn(api, "updateProfile").mockResolvedValue({ profile: { ...stored, authType: "none" } })
-  await act(async () => root.render(<QueryClientProvider client={client}><ProfilePage providerId={provider.id} profileId={profile.id} /></QueryClientProvider>))
-  await flush()
-  await click("Test")
+  await renderProfilePage()
+  await click("Test connection")
   expect(container.textContent).toContain("Upstream initialized")
   await click("Edit")
   await click("Replace")
@@ -120,7 +126,7 @@ it("keeps the stored auth label when cancelling replacement and clears stale con
   expect(container.textContent).not.toContain("Upstream initialized")
 })
 
-it("discards upstream credentials and generated tokens from mutation cache after creation", async () => {
+it("creates a profile without keeping credentials or the token in the mutation cache", async () => {
   vi.spyOn(api, "createProfile").mockResolvedValue({ profile, accessToken: "synthetic-downstream-token" })
   await act(async () => root.render(<QueryClientProvider client={client}><ProfileDialog provider={provider} mode={{ kind: "create" }} trigger={<button>Add profile</button>} /></QueryClientProvider>))
   await click("Add profile")
@@ -129,21 +135,39 @@ it("discards upstream credentials and generated tokens from mutation cache after
   await fill("profile-bearer", "synthetic-upstream-secret")
   await click("Create profile")
   expect(api.createProfile).toHaveBeenCalledWith(provider.id, { name: "Work", slug: "work", auth: { type: "bearer", token: "synthetic-upstream-secret" } })
-  expect(document.body.textContent).toContain("synthetic-downstream-token")
-  await click("Done")
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
   expect(document.body.textContent).not.toContain("synthetic-downstream-token")
   expect(client.getMutationCache().getAll()).toHaveLength(0)
 })
 
-it("drops the rotated token from mutation cache while the profile stays mounted", async () => {
+it("shows the rotated token in place and drops it on hide", async () => {
   vi.spyOn(api, "rotateToken").mockResolvedValue({ accessToken: "synthetic-rotated-token" })
-  await act(async () => root.render(<QueryClientProvider client={client}><ProfilePage providerId={provider.id} profileId={profile.id} /></QueryClientProvider>))
-  await flush()
+  await renderProfilePage()
   await click("Rotate")
   await click("Rotate token")
-  expect(document.body.textContent).toContain("synthetic-rotated-token")
-  await click("Done")
-  expect(container.textContent).toContain("Work")
-  expect(document.body.textContent).not.toContain("synthetic-rotated-token")
+  expect(document.querySelector('[role="alertdialog"]')).toBeNull()
+  expect(container.textContent).toContain("synthetic-rotated-token")
+  await click("Hide token")
+  expect(container.textContent).not.toContain("synthetic-rotated-token")
+  expect(client.getMutationCache().getAll()).toHaveLength(0)
+})
+
+it("copies client commands with the real token while it stays masked, and reveals on show", async () => {
+  vi.spyOn(api, "revealToken").mockResolvedValue({ accessToken: "synthetic-revealed-token" })
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true })
+  await renderProfilePage()
+  expect(container.textContent).not.toContain("synthetic-revealed-token")
+  await click("Copy Claude Code command")
+  expect(writeText).toHaveBeenCalledTimes(1)
+  const copied = writeText.mock.calls[0]?.[0]
+  expect(copied).toContain("claude mcp add --transport http fixture-work http://127.0.0.1:7433/mcps/fixture/work")
+  expect(copied).toContain("Bearer synthetic-revealed-token")
+  expect(container.textContent).not.toContain("synthetic-revealed-token")
+  await click("Show token")
+  expect(api.revealToken).toHaveBeenCalledTimes(1)
+  expect(container.querySelectorAll("code, pre")).toSatisfy((nodes: NodeListOf<Element>) =>
+    [...nodes].filter((node) => node.textContent?.includes("synthetic-revealed-token")).length >= 2,
+  )
   expect(client.getMutationCache().getAll()).toHaveLength(0)
 })
