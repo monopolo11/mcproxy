@@ -361,8 +361,11 @@ export class Store {
       })),
     };
   }
+  /** `provider/profile` slugs, the profile's endpoint path; names it in logs. */
+  label(p: Profile) {
+    return `${this.provider(p.providerId).slug}/${p.slug}`;
+  }
   view(p: Profile, base: string) {
-    const provider = this.provider(p.providerId);
     const secret = p.authType === "oauth" ? this.secret(p.id) : undefined;
     const expired = secret?.pending && secret.pending.expiresAt <= Date.now();
     const lastError = expired
@@ -381,7 +384,7 @@ export class Store {
       } : {}),
       createdAt: p.createdAt,
       ...(p.tokenIssuedAt ? { tokenIssuedAt: p.tokenIssuedAt } : {}),
-      endpoint: `${base}/mcps/${provider.slug}/${p.slug}`,
+      endpoint: `${base}/mcps/${this.label(p)}`,
     };
   }
 }

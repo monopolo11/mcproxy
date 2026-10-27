@@ -6,6 +6,8 @@ import {
 import { type OAuthClientInformationMixed } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { AppError } from "./model.js";
 import { Store, token } from "./store.js";
+import { logger, reason } from "./log.js";
+const log = logger("oauth");
 const auth: typeof sdkAuth = (provider, options) =>
   sdkAuth(provider, {
     scope: provider.clientMetadata.scope,
@@ -182,7 +184,11 @@ export class OAuth {
         );
         if (!authorizationUrl)
           throw new Error("Authorization did not produce a redirect");
-      } catch {
+      } catch (error) {
+        log.warn("authorization start failed", {
+          profile: this.store.label(p),
+          error: reason(error),
+        });
         this.store.assertGeneration(id, generation);
         const current = this.store.secret(id);
         if (current.pending?.state === secret.pending.state) {
@@ -195,6 +201,7 @@ export class OAuth {
           "Authorization failed. Connect again to retry",
         );
       }
+      log.info("authorization started", { profile: this.store.label(p) });
       return { authorizationUrl };
     });
   }
@@ -216,10 +223,15 @@ export class OAuth {
           delete secret.pending;
           secret.oauthError = "Authorization expired. Connect again to retry";
           this.store.saveSecret(found.id, secret);
+          log.warn("authorization expired", { profile: this.store.label(found) });
         }
         throw new AppError("oauth_state", "Expired authorization state");
       }
       if (denied) {
+        log.warn("authorization denied", {
+          profile: this.store.label(found),
+          error: denied === "access_denied" ? denied : "other",
+        });
         delete secret.pending;
         secret.oauthError = denied === "access_denied"
           ? "Authorization was denied. Connect again to retry"
@@ -256,8 +268,13 @@ export class OAuth {
         delete current.oauthError;
         this.store.saveSecret(found.id, current);
         this.store.update(found.id, { status: "ready" });
+        log.info("authorized", { profile: this.store.label(found) });
         return found.id;
-      } catch {
+      } catch (error) {
+        log.warn("authorization exchange failed", {
+          profile: this.store.label(found),
+          error: reason(error),
+        });
         this.store.assertGeneration(found.id, generation);
         const current = this.store.secret(found.id);
         current.oauthError = "Authorization failed. Connect again to retry";
@@ -286,7 +303,12 @@ export class OAuth {
           throw new Error("Invalid OAuth transport");
         try {
           await auth(this.provider(id), { serverUrl: upstream.transport.url });
-        } catch {
+          log.info("token refreshed", { profile: this.store.label(p) });
+        } catch (error) {
+          log.warn("token refresh failed: profile needs reconnect", {
+            profile: this.store.label(p),
+            error: reason(error),
+          });
           this.store.assertGeneration(id, generation);
           this.store.update(id, { status: "needs_auth" });
           throw new AppError("needs_auth", "Reconnect this profile", 401);

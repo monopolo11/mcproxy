@@ -72,4 +72,15 @@ Downstream event-ID replay, end-to-end SSE resumption and replay across daemon r
 
 There are at most 256 active downstream sessions. Request bodies are limited to 1 MiB. The proxy does not log request bodies, headers, stderr, authorization URLs or upstream error text. Protocol error objects from an upstream are intentionally preserved, so an upstream remains responsible for keeping secrets out of its own MCP results and errors. Only configure upstream servers and stdio commands you trust.
 
+## Logs
+
+The daemon writes one timestamped line per event to stdout (warnings and errors to stderr), greppable by scope and `key=value` fields:
+
+```
+2026-10-27 12:48:13.488 INFO  [toolkit] session closed session=2e4bcb32-... toolkit=work reason=members-changed
+2026-10-27 12:48:13.643 WARN  [http] request rejected method=POST path=/api/toolkits status=409 code=conflict
+```
+
+Scopes are `server`, `http` (rejected and failed requests), `proxy` and `toolkit` (sessions opened and closed with a `reason`, upstream connection failures) and `oauth` (authorization, refresh). Profiles show as `provider/profile`. Errors log a code or name such as `TypeError:ECONNREFUSED`, never their message. `src/log.ts` holds the format.
+
 Primary-source findings are in [docs/research/proxy-auth.md](docs/research/proxy-auth.md).
