@@ -54,4 +54,14 @@ export const migrations = [
     );
   `,
   },
+  {
+    // Daemon preferences set through the management API, such as the update channel.
+    version: 4,
+    sql: `
+    CREATE TABLE settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `,
+  },
 ] as const;
