@@ -62,6 +62,24 @@ type Profile = {
 OAuth authorization state is separate from connection readiness. A reconnect preserves usable current credentials and sessions while a new exchange is pending. Successful exchange replaces the credentials and closes existing sessions. Denial, failure, or expiration appears through `oauthStatus: "error"` and a safe `lastError`; it does not discard the current credentials. An unauthenticated resource probe discovers challenge-provided metadata before well-known fallback. Refresh stays bound to the saved issuer.
 - `POST /api/profiles/:id/test` returns `{ ok: boolean, message: string, capabilities?: Record<string, unknown> }`. Test connection and initialization only, without invoking tools.
 
+Toolkits (added after the initial build) group profiles behind `/toolkits/:slug` with one bearer token:
+
+```ts
+type ToolkitInput = { name: string; slug: string; profileIds: string[] };
+type Toolkit = {
+  id: string; name: string; slug: string; endpoint: string;
+  tokenIssuedAt: string; createdAt: string;
+  members: { profileId: string; providerId: string; prefix: string }[];
+};
+```
+
+- `GET /api/toolkits` returns `{ toolkits: Toolkit[] }`; `POST /api/toolkits` returns `{ toolkit, accessToken }` with 201.
+- `PATCH /api/toolkits/:id` takes `{ name?, profileIds? }`; `DELETE` returns 204. Both close affected sessions.
+- `GET`/`POST /api/toolkits/:id/token` reveal or rotate the token like profile tokens.
+- `POST /api/toolkits/:id/test` returns `{ members: { profileId, ok, message, tools: string[] }[] }` with prefixed names.
+
+Member tools are exposed as `<prefix><name>`: `provider_` when the provider has one profile in the toolkit, `provider_profile_` when it has several, hyphens replaced by underscores. Only tools are merged.
+
 Validate slugs, uniqueness, body sizes, transport/auth compatibility, and forbidden hop-by-hop/custom routing headers. Protect credentials and refresh tokens at rest. Redact tokens from all logs and errors. Bind sessions to both provider and profile; authenticate every downstream HTTP request, including GET and DELETE. Prevent sharing upstream sessions or stdio processes across profiles or downstream clients unless correctness is proven. Dispose child processes and streams on termination.
 
 ## UI behavior

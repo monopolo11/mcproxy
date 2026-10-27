@@ -6,7 +6,7 @@ import { CLIENT_IDS } from "./clients"
 // and which clients show on profile pages. Nothing here is a secret.
 
 const schema = z.object({
-  collapsed: z.array(z.enum(["mcps", "settings"])).default([]),
+  collapsed: z.array(z.enum(["mcps", "toolkits", "settings"])).default([]),
   hiddenClients: z.array(z.enum(CLIENT_IDS)).default([]),
 })
 

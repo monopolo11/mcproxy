@@ -14,12 +14,15 @@ import {
   providerInput,
   profileInput,
   profilePatch,
+  toolkitInput,
+  toolkitPatch,
   compatible,
 } from "./model.js";
 import { Store, hash } from "./store.js";
 import { localPlatform, Vault, type Platform } from "./platform.js";
 import { OAuth } from "./oauth.js";
 import { ProxySessions, ProxyService } from "./proxy.js";
+import { ToolkitSessions } from "./toolkit.js";
 export interface ServerOptions {
   stateDir?: string;
   port?: number;
@@ -85,6 +88,13 @@ export async function createProxyServer(options: ServerOptions = {}) {
       async () => new ProxySessions(store, oauth),
       (p) => p.dispose(),
     );
+    const toolkits = await acquire(
+      async () => new ToolkitSessions(store, proxy),
+      (t) => t.dispose(),
+    );
+    /** Profile sessions and any toolkit session that includes the profile. */
+    const closeProfile = (id: string) =>
+      Promise.all([proxy.closeProfile(id), toolkits.closeProfile(id)]);
     const runtime = Context.make(Storage, store).pipe(
       Context.add(ProxyService, proxy),
     );
@@ -144,6 +154,22 @@ export async function createProxyServer(options: ServerOptions = {}) {
       const url = new URL(req.url ?? "/", base);
       const parts = url.pathname.split("/").filter(Boolean);
       const method = req.method;
+      const authorize = (tokenHash: string, subject: string) => {
+        const supplied = req.headers.authorization?.match(
+          /^Bearer ([A-Za-z0-9_-]+)$/,
+        )?.[1];
+        if (
+          !supplied ||
+          !timingSafeEqual(Buffer.from(hash(supplied)), Buffer.from(tokenHash))
+        )
+          throw new AppError(
+            "unauthorized",
+            `A valid ${subject} bearer token is required`,
+            401,
+          );
+        if (!["GET", "POST", "DELETE"].includes(method ?? ""))
+          throw new AppError("method_not_allowed", "Method not allowed", 405);
+      };
       if (parts[0] === "mcps") {
         const provider = storage
           .allProviders()
@@ -153,25 +179,22 @@ export async function createProxyServer(options: ServerOptions = {}) {
           storage.allProfiles(provider.id).find((p) => p.slug === parts[2]);
         if (!profile || parts.length !== 3)
           throw new AppError("not_found", "Endpoint not found", 404);
-        const supplied = req.headers.authorization?.match(
-          /^Bearer ([A-Za-z0-9_-]+)$/,
-        )?.[1];
-        if (
-          !supplied ||
-          !timingSafeEqual(
-            Buffer.from(hash(supplied)),
-            Buffer.from(profile.tokenHash),
-          )
-        )
-          throw new AppError(
-            "unauthorized",
-            "A valid profile bearer token is required",
-            401,
-          );
-        if (!["GET", "POST", "DELETE"].includes(method ?? ""))
-          throw new AppError("method_not_allowed", "Method not allowed", 405);
+        authorize(profile.tokenHash, "profile");
         await sessions.handle(
           profile,
+          req,
+          res,
+          method === "POST" ? await body(req) : undefined,
+        );
+        return;
+      }
+      if (parts[0] === "toolkits") {
+        const toolkit = storage.allToolkits().find((t) => t.slug === parts[1]);
+        if (!toolkit || parts.length !== 2)
+          throw new AppError("not_found", "Endpoint not found", 404);
+        authorize(toolkit.tokenHash, "toolkit");
+        await toolkits.handle(
+          toolkit,
           req,
           res,
           method === "POST" ? await body(req) : undefined,
@@ -192,7 +215,7 @@ export async function createProxyServer(options: ServerOptions = {}) {
             code,
             url.searchParams.get("error"),
           );
-          await sessions.closeProfile(profileId);
+          await closeProfile(profileId);
         } catch (error) {
           const failure = error instanceof AppError
             ? error
@@ -220,15 +243,16 @@ export async function createProxyServer(options: ServerOptions = {}) {
         return;
       }
       if (parts[0] === "api") {
-        if (
-          !["GET", "HEAD"].includes(method ?? "") &&
-          req.headers["x-mcproxy-request"] !== "1"
-        )
-          throw new AppError(
-            "request_header",
-            "X-Mcproxy-Request: 1 is required",
-            403,
-          );
+        // Reading a secret gets the same CSRF marker as mutations.
+        const requireMarker = () => {
+          if (req.headers["x-mcproxy-request"] !== "1")
+            throw new AppError(
+              "request_header",
+              "X-Mcproxy-Request: 1 is required",
+              403,
+            );
+        };
+        if (!["GET", "HEAD"].includes(method ?? "")) requireMarker();
         if (url.pathname === "/api/health" && method === "GET") {
           json(res, 200, {
             status: "ok",
@@ -257,9 +281,7 @@ export async function createProxyServer(options: ServerOptions = {}) {
           if (parts.length === 3 && method === "DELETE") {
             const profileIds = storage.allProfiles(id).map((p) => p.id);
             storage.deleteProvider(id);
-            await Promise.all(
-              profileIds.map((id) => sessions.closeProfile(id)),
-            );
+            await Promise.all(profileIds.map(closeProfile));
             json(res, 204);
             return;
           }
@@ -290,7 +312,7 @@ export async function createProxyServer(options: ServerOptions = {}) {
           const p = storage.profile(id);
           if (parts.length === 3 && method === "DELETE") {
             storage.deleteProfile(id);
-            await sessions.closeProfile(id);
+            await closeProfile(id);
             json(res, 204);
             return;
           }
@@ -314,19 +336,13 @@ export async function createProxyServer(options: ServerOptions = {}) {
                   }
                 : {}),
             });
-            if (patch.auth) await sessions.closeProfile(id);
+            if (patch.auth) await closeProfile(id);
             json(res, 200, { profile: storage.view(updated, base) });
             return;
           }
           if (parts.length === 4 && parts[3] === "token") {
             if (method === "GET") {
-              // Reading a secret gets the same CSRF marker as mutations.
-              if (req.headers["x-mcproxy-request"] !== "1")
-                throw new AppError(
-                  "request_header",
-                  "X-Mcproxy-Request: 1 is required",
-                  403,
-                );
+              requireMarker();
               json(res, 200, { accessToken: storage.revealToken(id) });
               return;
             }
@@ -349,6 +365,61 @@ export async function createProxyServer(options: ServerOptions = {}) {
           ) {
             const authorization = await oauth.start(id);
             json(res, 200, authorization);
+            return;
+          }
+        }
+        if (url.pathname === "/api/toolkits") {
+          if (method === "GET") {
+            json(res, 200, {
+              toolkits: storage
+                .allToolkits()
+                .map((t) => storage.toolkitView(t, base)),
+            });
+            return;
+          }
+          if (method === "POST") {
+            const result = storage.createToolkit(
+              toolkitInput.parse(await body(req)),
+            );
+            json(res, 201, {
+              toolkit: storage.toolkitView(result.toolkit, base),
+              accessToken: result.accessToken,
+            });
+            return;
+          }
+        }
+        if (parts[1] === "toolkits" && parts[2]) {
+          const id = parts[2];
+          const t = storage.toolkit(id);
+          if (parts.length === 3 && method === "DELETE") {
+            storage.deleteToolkit(id);
+            await toolkits.closeToolkit(id);
+            json(res, 204);
+            return;
+          }
+          if (parts.length === 3 && method === "PATCH") {
+            const patch = toolkitPatch.parse(await body(req));
+            const updated = storage.updateToolkit(id, patch);
+            // New members mean new prefixes, so open sessions restart.
+            if (patch.profileIds) await toolkits.closeToolkit(id);
+            json(res, 200, { toolkit: storage.toolkitView(updated, base) });
+            return;
+          }
+          if (parts.length === 4 && parts[3] === "token") {
+            if (method === "GET") {
+              requireMarker();
+              json(res, 200, { accessToken: storage.revealToolkitToken(id) });
+              return;
+            }
+            if (method === "POST") {
+              const accessToken = storage.rotateToolkitToken(id);
+              await toolkits.closeToolkit(id);
+              json(res, 200, { accessToken });
+              return;
+            }
+          }
+          if (parts.length === 4 && parts[3] === "test" && method === "POST") {
+            json(res, 200, await toolkits.test(t));
             return;
           }
         }
@@ -410,6 +481,7 @@ export async function createProxyServer(options: ServerOptions = {}) {
           });
         }),
       async (s) => {
+        await toolkits.dispose();
         await proxy.dispose();
         s.closeAllConnections();
         await new Promise<void>((resolve, reject) =>
@@ -425,7 +497,7 @@ export async function createProxyServer(options: ServerOptions = {}) {
       url: base,
       port: address.port,
       close: () => Effect.runPromise(Scope.close(scope, Exit.void)),
-      sessionCount: () => proxy.sessions.size,
+      sessionCount: () => proxy.sessions.size + toolkits.sessions.size,
     };
   } catch (error) {
     await Effect.runPromise(Scope.close(scope, Exit.void));

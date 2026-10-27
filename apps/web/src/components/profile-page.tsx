@@ -3,6 +3,7 @@ import { Link, useNavigate } from "@tanstack/react-router"
 import { PencilIcon, PlugZapIcon, Trash2Icon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { absoluteEndpoint, errorMessage, type Profile, type Provider } from "@/lib/api"
+import { clientServerName } from "@/lib/clients"
 import { AUTH_LABELS } from "@/lib/forms"
 import { profilesQuery, providersQuery, useDeleteProfile, useTestProfile } from "@/lib/queries"
 import { AccessTokenField, useAccessToken } from "./access-token"
@@ -42,7 +43,7 @@ function ProfileDetail({ provider, profile }: { provider: Provider; profile: Pro
   const navigate = useNavigate()
   const remove = useDeleteProfile()
   const test = useTestProfile()
-  const token = useAccessToken(profile)
+  const token = useAccessToken({ kind: "profile", id: profile.id, name: profile.name })
   const endpoint = absoluteEndpoint(profile.endpoint)
 
   return (
@@ -110,7 +111,7 @@ function ProfileDetail({ provider, profile }: { provider: Provider; profile: Pro
               <CopyButton value={endpoint} label="Copy endpoint" />
             </Row>
             <Row label="Access token">
-              <AccessTokenField profile={profile} token={token} onRotated={test.reset} />
+              <AccessTokenField owner={{ kind: "profile", id: profile.id, name: profile.name }} token={token} onRotated={test.reset} />
             </Row>
             {profile.tokenIssuedAt ? (
               <Row label="Token issued">
@@ -120,7 +121,7 @@ function ProfileDetail({ provider, profile }: { provider: Provider; profile: Pro
           </Rows>
         </Section>
 
-        <ClientCommands provider={provider} profile={profile} token={token} />
+        <ClientCommands name={clientServerName(provider.slug, profile.slug)} endpoint={endpoint} token={token} />
 
         <Section title="Upstream">
           <Rows>
