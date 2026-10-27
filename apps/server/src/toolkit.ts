@@ -16,8 +16,11 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { DownstreamTransport } from "./downstream.js";
 import { AppError, toolPrefixes } from "./model.js";
-import { ProxySessions, listAllTools } from "./proxy.js";
+import { ProxySessions, listAllTools, type CloseReason } from "./proxy.js";
 import type { Profile, Provider, Store, Toolkit } from "./store.js";
+import { logger, reason } from "./log.js";
+
+const log = logger("toolkit");
 
 /** One member of a toolkit inside one downstream session. */
 interface Member {
@@ -31,6 +34,8 @@ interface Member {
 }
 interface Session {
   toolkitId: string;
+  /** Toolkit slug, for logs. */
+  label: string;
   members: Member[];
   down: DownstreamTransport;
   server: Server;
@@ -52,40 +57,44 @@ export class ToolkitSessions {
   ) {
     this.timer = setInterval(() => {
       for (const [id, s] of this.sessions)
-        if (Date.now() - s.touched > 30 * 60_000) void this.close(id);
+        if (Date.now() - s.touched > 30 * 60_000) void this.close(id, "idle");
     }, 60_000);
     this.timer.unref();
   }
-  async close(id: string) {
+  async close(id: string, why: CloseReason) {
     const s = this.sessions.get(id);
     if (!s) return;
     this.sessions.delete(id);
+    log.info("session closed", { session: id, toolkit: s.label, reason: why });
     s.down.onclose = undefined;
     await Promise.allSettled([
       s.server.close(),
       ...s.members.map((m) => disconnect(m)),
     ]);
   }
-  async closeToolkit(toolkitId: string) {
-    await this.closeWhere((s) => s.toolkitId === toolkitId);
+  async closeToolkit(toolkitId: string, why: CloseReason) {
+    await this.closeWhere((s) => s.toolkitId === toolkitId, why);
   }
   /** Credentials or membership of a profile changed: drop sessions using it. */
-  async closeProfile(profileId: string) {
-    await this.closeWhere((s) =>
-      s.members.some((m) => m.profile.id === profileId),
+  async closeProfile(profileId: string, why: CloseReason) {
+    await this.closeWhere(
+      (s) => s.members.some((m) => m.profile.id === profileId),
+      why,
     );
   }
-  private async closeWhere(match: (s: Session) => boolean) {
+  private async closeWhere(match: (s: Session) => boolean, why: CloseReason) {
     await Promise.all(
       [...this.sessions]
         .filter(([, s]) => match(s))
-        .map(([id]) => this.close(id)),
+        .map(([id]) => this.close(id, why)),
     );
   }
   async dispose() {
     this.stopping = true;
     clearInterval(this.timer);
-    await Promise.all([...this.sessions.keys()].map((id) => this.close(id)));
+    await Promise.all(
+      [...this.sessions.keys()].map((id) => this.close(id, "shutdown")),
+    );
   }
   async handle(
     toolkit: Toolkit,
@@ -118,9 +127,14 @@ export class ToolkitSessions {
       try {
         await session.server.connect(session.down);
       } catch {
-        await this.close(id);
+        await this.close(id, "initialize-rejected");
         throw new AppError("internal", "Request failed", 500);
       }
+      log.info("session opened", {
+        session: id,
+        toolkit: toolkit.slug,
+        members: session.members.length,
+      });
     }
     session.touched = Date.now();
     try {
@@ -130,12 +144,14 @@ export class ToolkitSessions {
         body,
         async () => {},
       );
-      if (created && status >= 400) await this.close(created);
+      if (created && status >= 400)
+        await this.close(created, "initialize-rejected");
     } catch (error) {
-      if (created) await this.close(created);
+      if (created) await this.close(created, "initialize-rejected");
       throw error;
     }
-    if (req.method === "DELETE" && header) await this.close(header);
+    if (req.method === "DELETE" && header)
+      await this.close(header, "client-closed");
   }
   private create(id: string, toolkit: Toolkit): Session {
     const rows = this.store.toolkitMembers(toolkit.id);
@@ -152,10 +168,11 @@ export class ToolkitSessions {
     );
     const down = new DownstreamTransport({ sessionIdGenerator: () => id });
     down.onclose = () => {
-      void this.close(id);
+      void this.close(id, "client-closed");
     };
     const session: Session = {
       toolkitId: toolkit.id,
+      label: toolkit.slug,
       members,
       down,
       server,
@@ -230,6 +247,11 @@ export class ToolkitSessions {
         up = await this.proxy.upstream(member.profile);
         await client.connect(up, { timeout: 10_000 });
       } catch (error) {
+        log.warn("member connect failed", {
+          toolkit: session.label,
+          profile: `${member.provider.slug}/${member.profile.slug}`,
+          error: reason(error),
+        });
         member.connecting = undefined;
         if (up instanceof StreamableHTTPClientTransport)
           await up.terminateSession().catch(() => {});
@@ -267,7 +289,12 @@ export class ToolkitSessions {
             message: "Upstream initialized",
             tools: tools.map((tool) => prefix + tool.name),
           };
-        } catch {
+        } catch (error) {
+          log.warn("member test failed", {
+            toolkit: toolkit.slug,
+            profile: this.store.label(profile),
+            error: reason(error),
+          });
           return {
             profileId: profile.id,
             ok: false,

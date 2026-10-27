@@ -21,8 +21,10 @@ import {
 import { Store, hash } from "./store.js";
 import { localPlatform, Vault, type Platform } from "./platform.js";
 import { OAuth } from "./oauth.js";
-import { ProxySessions, ProxyService } from "./proxy.js";
+import { ProxySessions, ProxyService, type CloseReason } from "./proxy.js";
 import { ToolkitSessions } from "./toolkit.js";
+import { logger, reason } from "./log.js";
+const log = logger("http");
 export interface ServerOptions {
   stateDir?: string;
   port?: number;
@@ -93,8 +95,8 @@ export async function createProxyServer(options: ServerOptions = {}) {
       (t) => t.dispose(),
     );
     /** Profile sessions and any toolkit session that includes the profile. */
-    const closeProfile = (id: string) =>
-      Promise.all([proxy.closeProfile(id), toolkits.closeProfile(id)]);
+    const closeProfile = (id: string, why: CloseReason) =>
+      Promise.all([proxy.closeProfile(id, why), toolkits.closeProfile(id, why)]);
     const runtime = Context.make(Storage, store).pipe(
       Context.add(ProxyService, proxy),
     );
@@ -106,16 +108,29 @@ export async function createProxyServer(options: ServerOptions = {}) {
           const sessions = yield* ProxyService;
           yield* Effect.tryPromise({
             try: () => handle(storage, sessions, req, res),
-            catch: (error) =>
-              error instanceof AppError
-                ? error
-                : error instanceof ZodError
-                  ? new AppError("validation", "Invalid request fields")
-                  : error instanceof Error &&
-                      "code" in error &&
-                      String(error.code).startsWith("SQLITE_CONSTRAINT")
-                    ? new AppError("conflict", "Slug already exists", 409)
-                    : new AppError("internal", "Request failed", 500),
+            catch: (error) => {
+              const failure =
+                error instanceof AppError
+                  ? error
+                  : error instanceof ZodError
+                    ? new AppError("validation", "Invalid request fields")
+                    : error instanceof Error &&
+                        "code" in error &&
+                        String(error.code).startsWith("SQLITE_CONSTRAINT")
+                      ? new AppError("conflict", "Slug already exists", 409)
+                      : new AppError("internal", "Request failed", 500);
+              // Path only: the query can carry OAuth codes and state.
+              const fields = {
+                method: req.method,
+                path: req.url?.split("?")[0],
+                status: failure.status,
+                code: failure.code,
+                error: failure === error ? undefined : reason(error),
+              };
+              if (failure.status >= 500) log.error("request failed", fields);
+              else log.warn("request rejected", fields);
+              return failure;
+            },
           });
         }),
       ).catch((error) => {
@@ -215,7 +230,7 @@ export async function createProxyServer(options: ServerOptions = {}) {
             code,
             url.searchParams.get("error"),
           );
-          await closeProfile(profileId);
+          await closeProfile(profileId, "reconnected");
         } catch (error) {
           const failure = error instanceof AppError
             ? error
@@ -281,7 +296,11 @@ export async function createProxyServer(options: ServerOptions = {}) {
           if (parts.length === 3 && method === "DELETE") {
             const profileIds = storage.allProfiles(id).map((p) => p.id);
             storage.deleteProvider(id);
-            await Promise.all(profileIds.map(closeProfile));
+            await Promise.all(
+              profileIds.map((profileId) =>
+                closeProfile(profileId, "profile-deleted"),
+              ),
+            );
             json(res, 204);
             return;
           }
@@ -312,7 +331,7 @@ export async function createProxyServer(options: ServerOptions = {}) {
           const p = storage.profile(id);
           if (parts.length === 3 && method === "DELETE") {
             storage.deleteProfile(id);
-            await closeProfile(id);
+            await closeProfile(id, "profile-deleted");
             json(res, 204);
             return;
           }
@@ -336,7 +355,7 @@ export async function createProxyServer(options: ServerOptions = {}) {
                   }
                 : {}),
             });
-            if (patch.auth) await closeProfile(id);
+            if (patch.auth) await closeProfile(id, "credentials-changed");
             json(res, 200, { profile: storage.view(updated, base) });
             return;
           }
@@ -348,7 +367,7 @@ export async function createProxyServer(options: ServerOptions = {}) {
             }
             if (method === "POST") {
               const accessToken = storage.rotateToken(id);
-              await sessions.closeProfile(id);
+              await sessions.closeProfile(id, "token-rotated");
               json(res, 200, { accessToken });
               return;
             }
@@ -404,7 +423,7 @@ export async function createProxyServer(options: ServerOptions = {}) {
           const t = storage.toolkit(id);
           if (parts.length === 3 && method === "DELETE") {
             storage.deleteToolkit(id);
-            await toolkits.closeToolkit(id);
+            await toolkits.closeToolkit(id, "toolkit-deleted");
             json(res, 204);
             return;
           }
@@ -412,7 +431,8 @@ export async function createProxyServer(options: ServerOptions = {}) {
             const patch = toolkitPatch.parse(await body(req));
             const updated = storage.updateToolkit(id, patch);
             // New members mean new prefixes, so open sessions restart.
-            if (patch.profileIds) await toolkits.closeToolkit(id);
+            if (patch.profileIds)
+              await toolkits.closeToolkit(id, "members-changed");
             json(res, 200, { toolkit: storage.toolkitView(updated, base) });
             return;
           }
@@ -424,7 +444,7 @@ export async function createProxyServer(options: ServerOptions = {}) {
             }
             if (method === "POST") {
               const accessToken = storage.rotateToolkitToken(id);
-              await toolkits.closeToolkit(id);
+              await toolkits.closeToolkit(id, "token-rotated");
               json(res, 200, { accessToken });
               return;
             }
