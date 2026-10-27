@@ -16,8 +16,28 @@ import {
 import { AppError } from "./model.js";
 import { Store, type Profile, type Secret } from "./store.js";
 import { OAuth } from "./oauth.js";
+import { logger, reason } from "./log.js";
+const log = logger("proxy");
+/** Why a downstream session closed; profile and toolkit sessions share these. */
+export type CloseReason =
+  | "idle"
+  | "client-closed"
+  | "upstream-closed"
+  | "relay-failed"
+  | "queue-overflow"
+  | "initialize-rejected"
+  | "upstream-failed"
+  | "shutdown"
+  | "token-rotated"
+  | "credentials-changed"
+  | "reconnected"
+  | "profile-deleted"
+  | "members-changed"
+  | "toolkit-deleted";
 interface Session {
   profileId: string;
+  /** `provider/profile`, for logs. */
+  label: string;
   down: DownstreamTransport;
   up: Transport;
   scope: Scope.Closeable;
@@ -40,7 +60,7 @@ export class ProxySessions {
   ) {
     this.timer = setInterval(() => {
       for (const [id, s] of this.sessions)
-        if (Date.now() - s.touched > 30 * 60_000) void this.close(id);
+        if (Date.now() - s.touched > 30 * 60_000) void this.close(id, "idle");
     }, 60_000);
     this.timer.unref();
   }
@@ -90,25 +110,28 @@ export class ProxySessions {
       },
     });
   }
-  async close(id: string) {
+  async close(id: string, why: CloseReason) {
     const s = this.sessions.get(id);
     if (!s) return;
     this.sessions.delete(id);
+    log.info("session closed", { session: id, profile: s.label, reason: why });
     s.pending.length = 0;
     s.pendingBytes = 0;
     await Effect.runPromise(Scope.close(s.scope, Exit.void));
   }
-  async closeProfile(id: string) {
+  async closeProfile(id: string, why: CloseReason) {
     await Promise.all(
       [...this.sessions]
         .filter(([, s]) => s.profileId === id)
-        .map(([key]) => this.close(key)),
+        .map(([key]) => this.close(key, why)),
     );
   }
   async dispose() {
     this.stopping = true;
     clearInterval(this.timer);
-    await Promise.all([...this.sessions.keys()].map((id) => this.close(id)));
+    await Promise.all(
+      [...this.sessions.keys()].map((id) => this.close(id, "shutdown")),
+    );
   }
   async handle(
     profile: Profile,
@@ -162,6 +185,7 @@ export class ProxySessions {
       });
       session = {
         profileId: profile.id,
+        label: this.store.label(profile),
         up,
         down,
         scope,
@@ -172,11 +196,13 @@ export class ProxySessions {
       const currentSession = session;
       this.sessions.set(id, session);
       initializedSessionId = id;
-      const cleanup = () => {
-        void this.close(id);
+      const end = (why: CloseReason) => () => {
+        void this.close(id, why);
       };
-      up.onclose = cleanup;
-      down.onclose = cleanup;
+      const cleanup = end("relay-failed");
+      up.onclose = end("upstream-closed");
+      // The downstream transport closes when the client sends DELETE.
+      down.onclose = end("client-closed");
       up.onerror = () => {};
       down.onerror = () => {};
       up.onmessage = (message) => {
@@ -203,7 +229,7 @@ export class ProxySessions {
             currentSession.pending.length >= 128 ||
             currentSession.pendingBytes > 1024 * 1024
           ) {
-            cleanup();
+            void this.close(id, "queue-overflow");
             return;
           }
           currentSession.pending.push(message);
@@ -240,14 +266,20 @@ export class ProxySessions {
       try {
         await up.start();
         await down.start();
-      } catch {
-        await this.close(id);
+      } catch (error) {
+        log.warn("upstream connect failed", {
+          session: id,
+          profile: currentSession.label,
+          error: reason(error),
+        });
+        await this.close(id, "upstream-failed");
         throw new AppError(
           "upstream_failed",
           "Could not connect to upstream",
           502,
         );
       }
+      log.info("session opened", { session: id, profile: currentSession.label });
     }
     session.touched = Date.now();
     const active = session;
@@ -263,12 +295,14 @@ export class ProxySessions {
       });
       // A rejected initialize never gives the client a session ID to delete.
       if (initializedSessionId && status >= 400)
-        await this.close(initializedSessionId);
+        await this.close(initializedSessionId, "initialize-rejected");
     } catch (error) {
-      if (initializedSessionId) await this.close(initializedSessionId);
+      if (initializedSessionId)
+        await this.close(initializedSessionId, "initialize-rejected");
       throw error;
     }
-    if (req.method === "DELETE" && header) await this.close(header);
+    if (req.method === "DELETE" && header)
+      await this.close(header, "client-closed");
   }
   /** Initializes the upstream as a one-off client, updating profile status. */
   async test(profile: Profile) {
@@ -281,8 +315,16 @@ export class ProxySessions {
       });
       this.store.assertGeneration(profile.id, generation);
       this.store.update(profile.id, { status: "ready" });
+      log.info("connection test passed", {
+        profile: this.store.label(profile),
+        tools: result.tools.length,
+      });
       return { ok: true, message: "Upstream initialized", ...result };
-    } catch {
+    } catch (error) {
+      log.warn("connection test failed", {
+        profile: this.store.label(profile),
+        error: reason(error),
+      });
       if (
         this.store.generation(profile.id) === generation &&
         this.store.profile(profile.id).status !== "needs_auth"
@@ -300,7 +342,11 @@ export class ProxySessions {
       return await this.inspect(profile, async (client) =>
         client.getServerCapabilities()?.tools ? listAllTools(client) : [],
       );
-    } catch {
+    } catch (error) {
+      log.warn("tools fetch failed", {
+        profile: this.store.label(profile),
+        error: reason(error),
+      });
       throw new AppError(
         "upstream_failed",
         "Upstream connection or initialization failed",
