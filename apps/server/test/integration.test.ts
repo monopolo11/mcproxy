@@ -617,6 +617,11 @@ test("profile updates keep endpoints stable, validate compatibility, test only i
       resources: {},
       prompts: {},
     });
+    assert.deepEqual(checked.data.tools, [
+      { name: "identity", inputSchema: { type: "object" } },
+    ]);
+    const listed = await env.api(`/api/profiles/${a.profile.id}/tools`);
+    assert.deepEqual(listed.data.tools, checked.data.tools);
     assert.equal(env.daemon.sessionCount(), 0);
     const client = await connect(a.profile.endpoint, a.accessToken);
     await env.api(`/api/providers/${p.provider.id}`, "DELETE");

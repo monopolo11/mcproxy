@@ -140,6 +140,20 @@ it("creates a profile without keeping credentials or the token in the mutation c
   expect(client.getMutationCache().getAll()).toHaveLength(0)
 })
 
+it("validates on submit only, and clears an error once the field is edited", async () => {
+  vi.spyOn(api, "createProfile").mockResolvedValue({ profile, accessToken: "synthetic-downstream-token" })
+  await act(async () => root.render(<QueryClientProvider client={client}><ProfileDialog provider={provider} mode={{ kind: "create" }} trigger={<button>Add profile</button>} /></QueryClientProvider>))
+  await click("Add profile")
+  await fill("profile-name", "Work")
+  await fill("profile-name", "")
+  expect(document.body.textContent).not.toContain("Required")
+  await click("Create profile")
+  expect(document.body.textContent).toContain("Required")
+  expect(api.createProfile).not.toHaveBeenCalled()
+  await fill("profile-name", "Work")
+  expect(document.body.textContent).not.toContain("Required")
+})
+
 it("shows the rotated token in place and drops it on hide", async () => {
   vi.spyOn(api, "rotateToken").mockResolvedValue({ accessToken: "synthetic-rotated-token" })
   await renderProfilePage()
@@ -150,6 +164,36 @@ it("shows the rotated token in place and drops it on hide", async () => {
   await click("Hide token")
   expect(container.textContent).not.toContain("synthetic-rotated-token")
   expect(client.getMutationCache().getAll()).toHaveLength(0)
+})
+
+const tools = [
+  { name: "list_issues", description: "Find issues", annotations: { readOnlyHint: true }, inputSchema: { type: "object", properties: { limit: { type: "integer" } } } },
+  { name: "delete_comment", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
+]
+
+it("loads tools on demand into a filterable sheet", async () => {
+  vi.spyOn(api, "listTools").mockResolvedValue({ tools })
+  await renderProfilePage()
+  expect(api.listTools).not.toHaveBeenCalled()
+  await click("View")
+  const sheet = document.querySelector('[role="dialog"]')
+  expect(sheet?.textContent).toContain("list_issues")
+  expect(container.textContent).toContain("2 tools")
+  await fill("tools-filter", "delete")
+  expect(sheet!.textContent).not.toContain("list_issues")
+  await click("delete_comment")
+  expect(sheet!.textContent).toContain("id *string")
+})
+
+it("reuses the tools from a passing test instead of reconnecting", async () => {
+  vi.spyOn(api, "testProfile").mockResolvedValue({ ok: true, message: "Upstream initialized", tools })
+  vi.spyOn(api, "listTools").mockResolvedValue({ tools: [] })
+  await renderProfilePage()
+  await click("Test connection")
+  expect(container.textContent).toContain("2 tools")
+  await click("View")
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("list_issues")
+  expect(api.listTools).not.toHaveBeenCalled()
 })
 
 it("copies client commands with the real token while it stays masked, and reveals on show", async () => {
