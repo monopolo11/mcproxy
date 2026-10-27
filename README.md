@@ -18,6 +18,15 @@ node apps/server/dist/main.js
 
 The daemon serves `apps/web/dist`. `PORT` overrides the default daemon port. Do not run two daemons against the same state directory.
 
+To start the daemon at login instead, build it and install the service:
+
+```sh
+pnpm build
+pnpm service install
+```
+
+`pnpm service` takes `install`, `uninstall`, `start`, `stop`, `restart` and `status`. It registers a launchd agent on macOS, a systemd user unit on Linux and a `HKCU\...\Run` entry on Windows, the platforms T3 Code ships for; none needs elevation. Install records the current `node`, `PATH` and `PORT`, so stdio profiles find the same commands as the shell that installed it, and it restarts the daemon when the definition changes. Run `pnpm service restart` after `pnpm build`. The daemon comes back after a crash but stays stopped after `pnpm service stop`. Logs go to `~/Library/Logs/mcproxy/mcproxy.log` on macOS, the user journal on Linux (`journalctl --user -u mcproxy`) and `%LOCALAPPDATA%\mcproxy\mcproxy.log` on Windows. On Linux the service stops at logout unless you `loginctl enable-linger`; on Windows a PowerShell window may flash at logon and stop is a forced kill. macOS is verified; Linux and Windows are implemented but not tested here.
+
 Behind a TLS-inspecting proxy (Cloudflare WARP, Zscaler, ...) connecting to an HTTPS upstream fails with `SELF_SIGNED_CERT_IN_CHAIN` and the test reports an untrusted certificate. Put the proxy's CA bundle in a `.env` at the repo root, which `pnpm dev` and `pnpm start` load, then restart:
 
 ```sh
@@ -60,9 +69,9 @@ Tools are the union of the members' tools, renamed `<prefix><tool>`. The prefix 
 
 ## State and platform boundaries
 
-macOS defaults to `~/Library/Application Support/mcproxy`. Linux uses `$XDG_STATE_HOME/mcproxy` or `~/.local/state/mcproxy`. Windows uses `%LOCALAPPDATA%/mcproxy`. macOS is the verified platform; Linux and Windows paths are implemented but not tested here. No background service is installed. Run the daemon in the foreground.
+macOS defaults to `~/Library/Application Support/mcproxy`. Linux uses `$XDG_STATE_HOME/mcproxy` or `~/.local/state/mcproxy`. Windows uses `%LOCALAPPDATA%/mcproxy`. macOS is the verified platform; Linux and Windows paths are implemented but not tested here. `pnpm service install` registers a login service; otherwise run the daemon in the foreground.
 
-`createProxyServer({ stateDir, port: 0, platform, webDir })` in `apps/server/src/server.ts` supports isolated embedding and tests. The returned handle exposes `url`, `port`, `close()` and `sessionCount()`. `Platform` and `CredentialStore` in `platform.ts` make filesystem locations and key storage injectable. The daemon does not launch a browser or install services.
+`createProxyServer({ stateDir, port: 0, platform, webDir })` in `apps/server/src/server.ts` supports isolated embedding and tests. The returned handle exposes `url`, `port`, `close()` and `sessionCount()`. `Platform` and `CredentialStore` in `platform.ts` make filesystem locations and key storage injectable. The daemon does not launch a browser; service installation lives in `startup.ts`, outside the daemon.
 
 Upstream credentials, OAuth tokens, discovery state, client registration and pending PKCE state use AES-256-GCM encryption in SQLite. The random encryption key is an owner-only `master.key` in an owner-only state directory. The database is owner-only. This default protects against other local users, not compromise of the current user or a backup containing both the key and database. Keychain integration is not implemented. Keep the complete state directory when moving or backing up profiles. Downstream tokens are random 256-bit values. The daemon stores a SHA-256 hash for authentication and a vault-sealed copy so the UI can show the token again; profiles created before that copy existed must rotate before reveal works.
 
