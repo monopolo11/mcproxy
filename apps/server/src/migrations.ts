@@ -33,4 +33,25 @@ export const migrations = [
     ALTER TABLE profiles ADD COLUMN tokenIssuedAt TEXT;
   `,
   },
+  {
+    // Toolkits expose several profiles behind one endpoint and token. Members
+    // follow their profile: deleting a profile removes it from every toolkit.
+    version: 3,
+    sql: `
+    CREATE TABLE toolkits (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL UNIQUE,
+      tokenHash TEXT NOT NULL,
+      tokenSealed TEXT NOT NULL,
+      tokenIssuedAt TEXT NOT NULL,
+      createdAt TEXT NOT NULL
+    );
+    CREATE TABLE toolkit_members (
+      toolkitId TEXT NOT NULL REFERENCES toolkits(id) ON DELETE CASCADE,
+      profileId TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+      PRIMARY KEY (toolkitId, profileId)
+    );
+  `,
+  },
 ] as const;

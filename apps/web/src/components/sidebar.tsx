@@ -4,16 +4,18 @@ import { ChevronRightIcon, PlusIcon } from "lucide-react"
 import type { ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
-import { errorMessage, type Provider } from "@/lib/api"
+import { errorMessage, type Provider, type Toolkit } from "@/lib/api"
 import { type NavSectionId, updatePrefs, usePrefs } from "@/lib/prefs"
-import { healthQuery, profilesQuery, providersQuery } from "@/lib/queries"
+import { healthQuery, profilesQuery, providersQuery, toolkitsQuery } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 import { ProviderDialog } from "./provider-dialog"
 import { aggregateStatus, StatusDot } from "./status"
+import { ToolkitDialog } from "./toolkit-dialog"
 
-/** Collapsible MCP tree, settings links, Toolkits placeholder, daemon health. */
+/** Collapsible MCP tree, toolkits, settings links, daemon health. */
 export function Sidebar() {
   const providers = useQuery(providersQuery)
+  const toolkits = useQuery(toolkitsQuery)
 
   return (
     <nav
@@ -32,6 +34,10 @@ export function Sidebar() {
           <McpTree providers={providers} />
         </NavSection>
 
+        <NavSection id="toolkits" label="Toolkits" count={toolkits.data?.length}>
+          <ToolkitList toolkits={toolkits} />
+        </NavSection>
+
         <NavSection id="settings" label="Settings">
           <Link to="/settings/daemon" className={navItem(1)}>
             Daemon
@@ -40,15 +46,6 @@ export function Sidebar() {
             Clients
           </Link>
         </NavSection>
-
-        <div
-          aria-disabled
-          className="flex h-7 items-center gap-1.5 px-1.5 text-xs font-medium text-muted-foreground/70"
-        >
-          <ChevronRightIcon className="size-3.5 opacity-50" />
-          Toolkits
-          <span className="ml-auto text-link">Soon™</span>
-        </div>
       </div>
 
       <DaemonStatus />
@@ -149,6 +146,35 @@ function McpTree({ providers }: { providers: ReturnType<typeof useQuery<Provider
         trigger={
           <button type="button" className={cn(navItem(0), "w-full text-link")}>
             <PlusIcon className="size-3.5" /> Add MCP
+          </button>
+        }
+      />
+    </>
+  )
+}
+
+function ToolkitList({ toolkits }: { toolkits: ReturnType<typeof useQuery<Toolkit[]>> }) {
+  if (toolkits.isPending) return <p className="px-3.5 py-1 text-muted-foreground">Loading</p>
+  if (toolkits.isError) {
+    return (
+      <p role="alert" className="px-3.5 py-1 text-destructive">
+        {errorMessage(toolkits.error)}
+      </p>
+    )
+  }
+  return (
+    <>
+      {toolkits.data.map((toolkit) => (
+        <Link key={toolkit.id} to="/toolkit/$toolkitId" params={{ toolkitId: toolkit.id }} className={navItem(0)}>
+          <span className="min-w-0 flex-1 truncate">{toolkit.name}</span>
+          <span className="font-mono text-[11px] text-muted-foreground">{toolkit.members.length}</span>
+        </Link>
+      ))}
+      <ToolkitDialog
+        mode={{ kind: "create" }}
+        trigger={
+          <button type="button" className={cn(navItem(0), "w-full text-link")}>
+            <PlusIcon className="size-3.5" /> Add toolkit
           </button>
         }
       />

@@ -15,10 +15,13 @@ import { ProviderDialog } from "@/components/provider-dialog"
 import { ProviderPage } from "@/components/provider-page"
 import { ClientSettings, DaemonSettings } from "@/components/settings-page"
 import { Sidebar } from "@/components/sidebar"
+import { ToolkitPage } from "@/components/toolkit-page"
 import { providersQuery } from "@/lib/queries"
 
-// Code-based routes. The sidebar lists every MCP with its profiles, so pages
-// are flat: an MCP, a profile, or a settings section.
+// Code-based routes. The sidebar lists every MCP with its profiles and every
+// toolkit, so pages are flat: an MCP, a profile, a toolkit, or a settings
+// section. UI toolkit pages live under /toolkit; the daemon serves toolkit
+// MCP endpoints under /toolkits.
 
 const rootRoute = createRootRoute({
   component: () => (
@@ -59,6 +62,15 @@ const profileRoute = createRoute({
   },
 })
 
+const toolkitRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/toolkit/$toolkitId",
+  component: function ToolkitRouteComponent() {
+    const { toolkitId } = toolkitRoute.useParams()
+    return <ToolkitPage toolkitId={toolkitId} />
+  },
+})
+
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/settings",
@@ -88,6 +100,7 @@ const routeTree = rootRoute.addChildren([
   indexRoute,
   providerRoute,
   profileRoute,
+  toolkitRoute,
   settingsRoute.addChildren([settingsIndexRoute, daemonSettingsRoute, clientSettingsRoute]),
 ])
 
