@@ -72,13 +72,16 @@ export function ProfileDialog({
   )
 }
 
-function ProfileForm({
+/** The profile form on its own; `initial` prefills create mode. */
+export function ProfileForm({
   provider,
   mode,
+  initial,
   onDone,
 }: {
   provider: Provider
   mode: Mode
+  initial?: Partial<ProfileFormValues>
   onDone: () => void
 }) {
   const navigate = useNavigate()
@@ -92,7 +95,7 @@ function ProfileForm({
 
   const defaultValues: ProfileFormValues =
     mode.kind === "create"
-      ? emptyProfileForm
+      ? { ...emptyProfileForm, ...initial }
       : {
           ...emptyProfileForm,
           name: mode.profile.name,
