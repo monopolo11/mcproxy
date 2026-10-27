@@ -228,3 +228,9 @@ export function toProfilePatch(values: ProfileFormValues): ProfilePatch {
     ...(values.replaceAuth ? { auth: toAuthInput(values) } : {}),
   }
 }
+
+// Toolkit --------------------------------------------------------------------
+
+export const toolkitFormSchema = z.object({ name, slug, profileIds: z.array(z.string()) })
+
+export type ToolkitFormValues = z.input<typeof toolkitFormSchema>

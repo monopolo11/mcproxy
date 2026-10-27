@@ -1,5 +1,15 @@
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query"
-import { api, type Profile, type ProfileInput, type ProfilePatch, type ProviderInput } from "./api"
+import {
+  api,
+  type Profile,
+  type ProfileInput,
+  type ProfilePatch,
+  type ProviderInput,
+  type TokenOwner,
+  type Toolkit,
+  type ToolkitInput,
+  type ToolkitPatch,
+} from "./api"
 
 // Query data excludes secrets. Sensitive mutations are discarded when their
 // observer resets or unmounts; token reveal components own the visible copy.
@@ -22,6 +32,11 @@ export const profilesQuery = (providerId: string) =>
     queryFn: async () => (await api.listProfiles(providerId)).profiles,
   })
 
+export const toolkitsQuery = queryOptions({
+  queryKey: ["toolkits"],
+  queryFn: async () => (await api.listToolkits()).toolkits,
+})
+
 export function useCreateProvider() {
   const client = useQueryClient()
   return useMutation({
@@ -36,6 +51,8 @@ export function useDeleteProvider() {
     mutationFn: (providerId: string) => api.deleteProvider(providerId),
     onSuccess: (_, providerId) => {
       client.removeQueries({ queryKey: profilesQuery(providerId).queryKey })
+      // Toolkits lose the deleted profiles as members.
+      void client.invalidateQueries({ queryKey: toolkitsQuery.queryKey })
       return client.invalidateQueries({ queryKey: providersQuery.queryKey, exact: true })
     },
   })
@@ -74,18 +91,20 @@ export function useDeleteProfile() {
   const client = useQueryClient()
   return useMutation({
     mutationFn: (profile: Profile) => api.deleteProfile(profile.id),
-    onSuccess: (_, profile) =>
-      client.invalidateQueries({ queryKey: profilesQuery(profile.providerId).queryKey }),
+    onSuccess: (_, profile) => {
+      void client.invalidateQueries({ queryKey: toolkitsQuery.queryKey })
+      return client.invalidateQueries({ queryKey: profilesQuery(profile.providerId).queryKey })
+    },
   })
 }
 
 export function useRotateToken() {
-  return useMutation({ gcTime: 0, mutationFn: (profileId: string) => api.rotateToken(profileId) })
+  return useMutation({ gcTime: 0, mutationFn: (owner: TokenOwner) => api.rotateToken(owner) })
 }
 
 /** Fetches the current token on demand; the caller keeps it in component state. */
 export function useRevealToken() {
-  return useMutation({ gcTime: 0, mutationFn: (profileId: string) => api.revealToken(profileId) })
+  return useMutation({ gcTime: 0, mutationFn: (owner: TokenOwner) => api.revealToken(owner) })
 }
 
 export function useTestProfile() {
@@ -100,4 +119,36 @@ export function useTestProfile() {
 
 export function useStartOAuth() {
   return useMutation({ gcTime: 0, mutationFn: (profileId: string) => api.startOAuth(profileId) })
+}
+
+export function useCreateToolkit() {
+  const client = useQueryClient()
+  return useMutation({
+    gcTime: 0,
+    mutationFn: (input: ToolkitInput) => api.createToolkit(input),
+    onSuccess: () => client.invalidateQueries({ queryKey: toolkitsQuery.queryKey }),
+  })
+}
+
+export function useUpdateToolkit() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: ToolkitPatch }) => api.updateToolkit(id, patch),
+    onSuccess: ({ toolkit }) =>
+      client.setQueryData(toolkitsQuery.queryKey, (list) =>
+        list?.map((item) => (item.id === toolkit.id ? toolkit : item)),
+      ),
+  })
+}
+
+export function useDeleteToolkit() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (toolkit: Toolkit) => api.deleteToolkit(toolkit.id),
+    onSuccess: () => client.invalidateQueries({ queryKey: toolkitsQuery.queryKey }),
+  })
+}
+
+export function useTestToolkit() {
+  return useMutation({ mutationFn: (toolkit: Toolkit) => api.testToolkit(toolkit.id) })
 }

@@ -1,7 +1,7 @@
 import { EyeIcon, EyeOffIcon, RotateCwIcon } from "lucide-react"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
-import { errorMessage, type Profile } from "@/lib/api"
+import { errorMessage, type TokenOwner } from "@/lib/api"
 import { useRevealToken, useRotateToken } from "@/lib/queries"
 import { ConfirmDialog } from "./confirm-dialog"
 import { CopyButton } from "./copy-button"
@@ -9,13 +9,17 @@ import { ErrorText } from "./field"
 
 export const TOKEN_MASK = "••••••••••••••••••••••••••••••••••••••••••"
 
+/** What issues the token plus the name shown in the rotation prompt. */
+export type TokenSubject = TokenOwner & { name: string }
+
 /**
- * Downstream token for one profile. The value is fetched on demand and lives
- * only in component state; hiding it drops the copy, rotating replaces it.
+ * Downstream token for one profile or toolkit. The value is fetched on demand
+ * and lives only in component state; hiding it drops the copy, rotating replaces it.
  */
-export function useAccessToken(profile: Profile) {
+export function useAccessToken(owner: TokenSubject) {
   const reveal = useRevealToken()
   const rotate = useRotateToken()
+  const target = { kind: owner.kind, id: owner.id }
   const [token, setToken] = useState<string>()
   const [shown, setShown] = useState(false)
   const [error, setError] = useState<string>()
@@ -23,7 +27,7 @@ export function useAccessToken(profile: Profile) {
   /** Current token, fetching it when needed. Lets copy work while masked. */
   const ensure = async () => {
     if (token) return token
-    const { accessToken } = await reveal.mutateAsync(profile.id)
+    const { accessToken } = await reveal.mutateAsync(target)
     reveal.reset()
     setToken(accessToken)
     return accessToken
@@ -50,7 +54,7 @@ export function useAccessToken(profile: Profile) {
       setToken(undefined)
     },
     rotate: async () => {
-      const { accessToken } = await rotate.mutateAsync(profile.id)
+      const { accessToken } = await rotate.mutateAsync(target)
       rotate.reset()
       setToken(accessToken)
       setShown(true)
@@ -63,11 +67,11 @@ export type AccessToken = ReturnType<typeof useAccessToken>
 
 /** Masked field with show, copy and rotate. */
 export function AccessTokenField({
-  profile,
+  owner,
   token,
   onRotated,
 }: {
-  profile: Profile
+  owner: TokenSubject
   token: AccessToken
   onRotated?: () => void
 }) {
@@ -102,7 +106,7 @@ export function AccessTokenField({
               <RotateCwIcon /> Rotate
             </Button>
           }
-          title={`Rotate token for ${profile.name}?`}
+          title={`Rotate token for ${owner.name}?`}
           description="The current token stops working immediately and connected clients are disconnected. Update clients with the new token."
           confirmLabel="Rotate token"
           pendingLabel="Rotating"

@@ -1,7 +1,6 @@
 import { Link } from "@tanstack/react-router"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { absoluteEndpoint, type Profile, type Provider } from "@/lib/api"
-import { CLIENT_IDS, CLIENT_LABELS, clientCommand, clientServerName } from "@/lib/clients"
+import { CLIENT_IDS, CLIENT_LABELS, clientCommand } from "@/lib/clients"
 import { usePrefs } from "@/lib/prefs"
 import { TOKEN_MASK, type AccessToken } from "./access-token"
 import { ClientLogo } from "./client-logos"
@@ -9,22 +8,21 @@ import { CopyButton } from "./copy-button"
 import { Section } from "./page"
 
 /**
- * One tab per client with the command that registers this profile. The
- * displayed text follows the token's masked state; copy always uses the real token.
+ * One tab per client with the command that registers an endpoint under
+ * `name`. The displayed text follows the token's masked state; copy always
+ * uses the real token.
  */
 export function ClientCommands({
-  provider,
-  profile,
+  name,
+  endpoint,
   token,
 }: {
-  provider: Provider
-  profile: Profile
+  name: string
+  endpoint: string
   token: AccessToken
 }) {
   const prefs = usePrefs()
   const visible = CLIENT_IDS.filter((id) => !prefs.hiddenClients.includes(id))
-  const name = clientServerName(provider.slug, profile.slug)
-  const endpoint = absoluteEndpoint(profile.endpoint)
   const first = visible[0]
 
   return (

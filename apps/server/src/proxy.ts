@@ -1,5 +1,5 @@
 import { AssociatedHTTPTransport } from "./http-relay.js";
-import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
+import type { JSONRPCMessage, Tool } from "@modelcontextprotocol/sdk/types.js";
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Context, Effect, Exit, Scope } from "effect";
@@ -272,21 +272,14 @@ export class ProxySessions {
   }
   async test(profile: Profile) {
     const generation = this.store.generation(profile.id);
-    let up: Transport | undefined;
-    const client = new Client({
-      name: "mcproxy-connection-test",
-      version: "0.1.0",
-    });
     try {
-      up = await this.upstream(profile);
-      await client.connect(up, { timeout: 10_000 });
+      const capabilities = await this.inspect(
+        profile,
+        async (client) => client.getServerCapabilities() ?? {},
+      );
       this.store.assertGeneration(profile.id, generation);
       this.store.update(profile.id, { status: "ready" });
-      return {
-        ok: true,
-        message: "Upstream initialized",
-        capabilities: client.getServerCapabilities() ?? {},
-      };
+      return { ok: true, message: "Upstream initialized", capabilities };
     } catch {
       if (
         this.store.generation(profile.id) === generation &&
@@ -297,10 +290,41 @@ export class ProxySessions {
         ok: false,
         message: "Upstream connection or initialization failed",
       };
+    }
+  }
+  /** Runs `use` against a short-lived upstream client, always closing it. */
+  async inspect<T>(
+    profile: Profile,
+    use: (client: Client) => Promise<T>,
+  ): Promise<T> {
+    let up: Transport | undefined;
+    const client = new Client({
+      name: "mcproxy-connection-test",
+      version: "0.1.0",
+    });
+    try {
+      up = await this.upstream(profile);
+      await client.connect(up, { timeout: 10_000 });
+      return await use(client);
     } finally {
       if (up instanceof StreamableHTTPClientTransport)
         await up.terminateSession().catch(() => {});
       await client.close();
     }
   }
+}
+
+/** Every tool the upstream advertises, following pagination up to a sane bound. */
+export async function listAllTools(client: Client) {
+  const tools: Tool[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 50; page++) {
+    const result = await client.listTools(cursor ? { cursor } : undefined, {
+      timeout: 10_000,
+    });
+    tools.push(...result.tools);
+    cursor = result.nextCursor;
+    if (!cursor) break;
+  }
+  return tools;
 }

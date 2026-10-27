@@ -67,6 +67,12 @@ export const profilePatch = z.object({
   name: name.optional(),
   auth: authInput.optional(),
 });
+const profileIds = z.array(z.string().min(1).max(64)).max(64);
+export const toolkitInput = z.object({ name, slug, profileIds });
+export const toolkitPatch = z.object({
+  name: name.optional(),
+  profileIds: profileIds.optional(),
+});
 export type AuthInput = z.infer<typeof authInput>;
 export type ProviderInput = z.infer<typeof providerInput>;
 export class AppError extends Error {
@@ -90,4 +96,25 @@ export function compatible(
       "incompatible_auth",
       "Authentication does not match transport",
     );
+}
+/**
+ * Tool name prefix per member profile. A provider with one profile in the
+ * toolkit prefixes with its slug; with several, each adds its profile slug.
+ * Hyphens become underscores so the prefix reads as one identifier.
+ */
+export function toolPrefixes(
+  members: readonly { profile: { id: string; slug: string }; provider: { slug: string } }[],
+) {
+  const perProvider = new Map<string, number>();
+  for (const { provider } of members)
+    perProvider.set(provider.slug, (perProvider.get(provider.slug) ?? 0) + 1);
+  const identifier = (slug: string) => slug.replace(/-/g, "_");
+  return new Map(
+    members.map(({ profile, provider }) => [
+      profile.id,
+      (perProvider.get(provider.slug) ?? 0) > 1
+        ? `${identifier(provider.slug)}_${identifier(profile.slug)}_`
+        : `${identifier(provider.slug)}_`,
+    ]),
+  );
 }

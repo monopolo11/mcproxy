@@ -1,7 +1,12 @@
 import { migrations } from "./migrations.js";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
-import { sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import {
+  primaryKey,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 import { eq } from "drizzle-orm";
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { join } from "node:path";
@@ -11,6 +16,7 @@ import {
   type AuthInput,
   type ProviderInput,
   compatible,
+  toolPrefixes,
 } from "./model.js";
 import { Vault } from "./platform.js";
 import type {
@@ -48,6 +54,28 @@ export const profiles = sqliteTable(
     uniqueIndex("profiles_provider_slug").on(table.providerId, table.slug),
   ],
 );
+export const toolkits = sqliteTable("toolkits", {
+  id: text().primaryKey(),
+  name: text().notNull(),
+  slug: text().notNull().unique(),
+  tokenHash: text().notNull(),
+  tokenSealed: text().notNull(),
+  tokenIssuedAt: text().notNull(),
+  createdAt: text().notNull(),
+});
+export const toolkitMembers = sqliteTable(
+  "toolkit_members",
+  {
+    toolkitId: text()
+      .notNull()
+      .references(() => toolkits.id, { onDelete: "cascade" }),
+    profileId: text()
+      .notNull()
+      .references(() => profiles.id, { onDelete: "cascade" }),
+  },
+  (table) => [primaryKey({ columns: [table.toolkitId, table.profileId] })],
+);
+export type Toolkit = typeof toolkits.$inferSelect;
 export type Provider = typeof providers.$inferSelect;
 export type Profile = typeof profiles.$inferSelect;
 export interface Secret {
@@ -224,6 +252,114 @@ export class Store {
     for (const p of this.allProfiles(id))
       this.generations.set(p.id, this.generation(p.id) + 1);
     this.db.delete(providers).where(eq(providers.id, id)).run();
+  }
+  allToolkits() {
+    return this.db.select().from(toolkits).all();
+  }
+  toolkit(id: string) {
+    const t = this.db.select().from(toolkits).where(eq(toolkits.id, id)).get();
+    if (!t) throw new AppError("not_found", "Toolkit not found", 404);
+    return t;
+  }
+  /** Member profiles with their providers, in a stable order for prefixing. */
+  toolkitMembers(id: string) {
+    const rows = this.db
+      .select({ profile: profiles, provider: providers })
+      .from(toolkitMembers)
+      .innerJoin(profiles, eq(toolkitMembers.profileId, profiles.id))
+      .innerJoin(providers, eq(profiles.providerId, providers.id))
+      .where(eq(toolkitMembers.toolkitId, id))
+      .all();
+    return rows.sort(
+      (a, b) =>
+        a.provider.slug.localeCompare(b.provider.slug) ||
+        a.profile.slug.localeCompare(b.profile.slug),
+    );
+  }
+  createToolkit(input: { name: string; slug: string; profileIds: string[] }) {
+    const accessToken = token();
+    const t: Toolkit = {
+      id: randomUUID(),
+      name: input.name,
+      slug: input.slug,
+      ...this.issueToken(accessToken),
+      createdAt: new Date().toISOString(),
+    };
+    this.sqlite.transaction(() => {
+      this.db.insert(toolkits).values(t).run();
+      this.setMembers(t.id, input.profileIds);
+    })();
+    return { toolkit: t, accessToken };
+  }
+  updateToolkit(id: string, patch: { name?: string; profileIds?: string[] }) {
+    this.toolkit(id);
+    this.sqlite.transaction(() => {
+      if (patch.name)
+        this.db
+          .update(toolkits)
+          .set({ name: patch.name })
+          .where(eq(toolkits.id, id))
+          .run();
+      if (patch.profileIds) {
+        this.db
+          .delete(toolkitMembers)
+          .where(eq(toolkitMembers.toolkitId, id))
+          .run();
+        this.setMembers(id, patch.profileIds);
+      }
+    })();
+    return this.toolkit(id);
+  }
+  private setMembers(toolkitId: string, profileIds: string[]) {
+    const unique = [...new Set(profileIds)];
+    for (const profileId of unique)
+      if (
+        !this.db
+          .select({ id: profiles.id })
+          .from(profiles)
+          .where(eq(profiles.id, profileId))
+          .get()
+      )
+        throw new AppError("invalid_member", "Profile not found");
+    if (unique.length)
+      this.db
+        .insert(toolkitMembers)
+        .values(unique.map((profileId) => ({ toolkitId, profileId })))
+        .run();
+  }
+  deleteToolkit(id: string) {
+    this.toolkit(id);
+    this.db.delete(toolkits).where(eq(toolkits.id, id)).run();
+  }
+  rotateToolkitToken(id: string) {
+    this.toolkit(id);
+    const accessToken = token();
+    this.db
+      .update(toolkits)
+      .set(this.issueToken(accessToken))
+      .where(eq(toolkits.id, id))
+      .run();
+    return accessToken;
+  }
+  revealToolkitToken(id: string) {
+    return this.vault.open<string>(this.toolkit(id).tokenSealed);
+  }
+  toolkitView(t: Toolkit, base: string) {
+    const members = this.toolkitMembers(t.id);
+    const prefixes = toolPrefixes(members);
+    return {
+      id: t.id,
+      name: t.name,
+      slug: t.slug,
+      tokenIssuedAt: t.tokenIssuedAt,
+      createdAt: t.createdAt,
+      endpoint: `${base}/toolkits/${t.slug}`,
+      members: members.map(({ profile, provider }) => ({
+        profileId: profile.id,
+        providerId: provider.id,
+        prefix: prefixes.get(profile.id)!,
+      })),
+    };
   }
   view(p: Profile, base: string) {
     const provider = this.provider(p.providerId);

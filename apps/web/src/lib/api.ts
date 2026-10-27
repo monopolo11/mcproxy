@@ -39,6 +39,27 @@ export type Profile = {
 
 export type Health = { status: "ok"; version: string; platform: string }
 
+/** Several profiles behind one endpoint; tools carry each member's prefix. */
+export type Toolkit = {
+  id: string
+  name: string
+  slug: string
+  endpoint: string
+  tokenIssuedAt: string
+  createdAt: string
+  members: ToolkitMember[]
+}
+export type ToolkitMember = { profileId: string; providerId: string; prefix: string }
+export type ToolkitInput = { name: string; slug: string; profileIds: string[] }
+export type ToolkitPatch = { name?: string; profileIds?: string[] }
+
+export type ToolkitTestResult = {
+  members: { profileId: string; ok: boolean; message: string; tools: string[] }[]
+}
+
+/** Profiles and toolkits both issue a downstream token through the same routes. */
+export type TokenOwner = { kind: "profile" | "toolkit"; id: string }
+
 export type TestResult = {
   ok: boolean
   message: string
@@ -136,14 +157,25 @@ export const api = {
     request<{ profile: Profile }>("PATCH", `/api/profiles/${id(profileId)}`, patch),
   deleteProfile: (profileId: string) =>
     request<undefined>("DELETE", `/api/profiles/${id(profileId)}`),
-  rotateToken: (profileId: string) =>
-    request<{ accessToken: string }>("POST", `/api/profiles/${id(profileId)}/token`),
-  revealToken: (profileId: string) =>
-    request<{ accessToken: string }>("GET", `/api/profiles/${id(profileId)}/token`),
+  rotateToken: (owner: TokenOwner) =>
+    request<{ accessToken: string }>("POST", `/api/${owner.kind}s/${id(owner.id)}/token`),
+  revealToken: (owner: TokenOwner) =>
+    request<{ accessToken: string }>("GET", `/api/${owner.kind}s/${id(owner.id)}/token`),
   startOAuth: (profileId: string) =>
     request<{ authorizationUrl: string }>("POST", `/api/profiles/${id(profileId)}/oauth/start`),
   testProfile: (profileId: string) =>
     request<TestResult>("POST", `/api/profiles/${id(profileId)}/test`),
+
+  listToolkits: () => request<{ toolkits: Toolkit[] }>("GET", "/api/toolkits"),
+  createToolkit: (input: ToolkitInput) =>
+    request<{ toolkit: Toolkit; accessToken: string }>("POST", "/api/toolkits", input),
+  updateToolkit: (toolkitId: string, patch: ToolkitPatch) =>
+    request<{ toolkit: Toolkit }>("PATCH", `/api/toolkits/${id(toolkitId)}`, patch),
+  deleteToolkit: (toolkitId: string) =>
+    request<undefined>("DELETE", `/api/toolkits/${id(toolkitId)}`),
+  /** Connects to every member; slow, so callers run it on demand. */
+  testToolkit: (toolkitId: string) =>
+    request<ToolkitTestResult>("POST", `/api/toolkits/${id(toolkitId)}/test`),
 }
 
 /** Human readable message for any thrown value. */
