@@ -16,7 +16,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { DownstreamTransport } from "./downstream.js";
 import { AppError, toolPrefixes } from "./model.js";
-import { ProxySessions, listAllTools, type CloseReason } from "./proxy.js";
+import { ProxySessions, listAllTools, upstreamFailureMessage, type CloseReason } from "./proxy.js";
 import type { Profile, Provider, Store, Toolkit } from "./store.js";
 import { logger, reason } from "./log.js";
 
@@ -298,7 +298,7 @@ export class ToolkitSessions {
           return {
             profileId: profile.id,
             ok: false,
-            message: "Upstream connection or initialization failed",
+            message: upstreamFailureMessage(error),
             tools: [],
           };
         }
