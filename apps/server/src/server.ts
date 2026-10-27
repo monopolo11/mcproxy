@@ -19,7 +19,7 @@ import {
   compatible,
 } from "./model.js";
 import { Store, hash } from "./store.js";
-import { localPlatform, Vault, type Platform } from "./platform.js";
+import { defaultPort, localPlatform, Vault, type Platform } from "./platform.js";
 import { OAuth } from "./oauth.js";
 import { ProxySessions, ProxyService, type CloseReason } from "./proxy.js";
 import { ToolkitSessions } from "./toolkit.js";
@@ -506,7 +506,7 @@ export async function createProxyServer(options: ServerOptions = {}) {
       () =>
         new Promise<typeof server>((resolve, reject) => {
           server.once("error", reject);
-          server.listen(options.port ?? 7433, "127.0.0.1", () => {
+          server.listen(options.port ?? defaultPort, "127.0.0.1", () => {
             server.off("error", reject);
             resolve(server);
           });
