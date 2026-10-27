@@ -11,14 +11,15 @@
  * `dist/main.js` with the repo's `.env`, exactly as `pnpm start` does.
  */
 import { execFile } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
+import { connect } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { setTimeout } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { localPlatform } from "./platform.js";
+import { localPlatform, portFromEnv } from "./platform.js";
 
 export const verbs = [
   "install",
@@ -51,11 +52,17 @@ export interface Status {
   pid?: number;
 }
 
+/**
+ * One platform's service. `install` writes the definition and starts the
+ * daemon; `manage` stops any previous instance first and checks the port.
+ */
 interface Manager {
   /** Where the service definition lives. */
   definition: string;
   /** Where to read the daemon's output. */
   logs: string;
+  /** The PORT recorded in the installed definition, if any. */
+  port(): number | undefined;
   install(): Promise<void>;
   uninstall(): Promise<void>;
   start(): Promise<void>;
@@ -73,23 +80,24 @@ const run = async (file: string, args: string[]) =>
 const attempt = (file: string, args: string[]) =>
   run(file, args).catch(() => undefined);
 
-/** Describes the daemon next to this file; throws if the web app is not built. */
+/** Reads the PORT a renderer wrote into its definition, matched by `pattern`. */
+function recordedPort(definition: string, pattern: RegExp) {
+  if (!existsSync(definition)) return undefined;
+  const match = pattern.exec(readFileSync(definition, "utf8"));
+  return match?.[1] === undefined ? undefined : Number(match[1]);
+}
+
+/** Describes the daemon next to this file; throws on an invalid PORT. */
 export function resolveTarget(): Target {
   const dist = dirname(fileURLToPath(import.meta.url));
   const cwd = resolve(dist, "..", "..", "..");
-  const port = process.env.PORT;
-  if (port !== undefined) {
-    const n = Number(port);
-    if (!Number.isInteger(n) || n < 1 || n > 65535)
-      throw new Error("PORT must be between 1 and 65535");
-  }
   return {
     node: realpathSync(process.execPath),
     main: join(dist, "main.js"),
     cwd,
     envFile: join(cwd, ".env"),
     path: process.env.PATH ?? "",
-    port,
+    port: process.env.PORT ? String(portFromEnv()) : undefined,
   };
 }
 
@@ -109,6 +117,7 @@ const envOf = (target: Target): Record<string, string> => ({
 // clean stop, which is how the daemon exits on SIGTERM.
 
 export const launchdLabel = "com.mcproxy.daemon";
+export const launchdPortPattern = /<key>PORT<\/key>\s*<string>(\d+)<\/string>/;
 
 export function launchdPlist(target: Target, logFile: string): string {
   const s = (text: string) => `<string>${escapeXml(text)}</string>`;
@@ -166,6 +175,7 @@ function launchd(target: Target): Manager {
   const stop = async () => {
     await attempt("launchctl", ["bootout", service]);
     for (let i = 0; i < 50 && (await loaded()); i++) await setTimeout(200);
+    if (await loaded()) throw new Error("The service did not stop within 10s");
   };
   const start = async () => {
     if (!existsSync(definition)) throw new Error("Not installed");
@@ -175,10 +185,10 @@ function launchd(target: Target): Manager {
   return {
     definition,
     logs,
+    port: () => recordedPort(definition, launchdPortPattern),
     async install() {
       await mkdir(dirname(definition), { recursive: true });
       await mkdir(dirname(logs), { recursive: true });
-      await stop();
       await writeFile(definition, launchdPlist(target, logs));
       await start();
     },
@@ -198,25 +208,29 @@ function launchd(target: Target): Manager {
   };
 }
 
-// Linux: a systemd user unit, started with the user's session. Without
-// `loginctl enable-linger` it stops at logout. Output goes to the journal.
+// Linux: a systemd user unit, started with the user's session. Install turns
+// on lingering so it also starts at boot and survives logout; when that needs
+// a password the user is told. Output goes to the journal.
 
 export const systemdUnitName = "mcproxy.service";
+export const systemdPortPattern = /"PORT=(\d+)"/;
 
 export function systemdUnit(target: Target): string {
+  // systemd expands `%` specifiers in these settings, and unquotes ExecStart
+  // and Environment with C-style escapes. WorkingDirectory is read verbatim.
+  const specifiers = (text: string) => text.replace(/%/g, "%%");
   const q = (text: string) =>
-    `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+    `"${specifiers(text).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
   const env = Object.entries(envOf(target))
     .map(([key, value]) => q(`${key}=${value}`))
     .join(" ");
   return [
     "[Unit]",
     "Description=mcproxy local MCP authentication proxy",
-    "After=network.target",
     "",
     "[Service]",
     `ExecStart=${[target.node, ...daemonArgs(target)].map(q).join(" ")}`,
-    `WorkingDirectory=${target.cwd}`,
+    `WorkingDirectory=${specifiers(target.cwd)}`,
     `Environment=${env}`,
     "Restart=on-failure",
     "RestartSec=10",
@@ -234,16 +248,22 @@ function systemd(target: Target): Manager {
     "user",
     systemdUnitName,
   );
-  const systemctl = (...args: string[]) => run("systemctl", ["--user", ...args]);
+  const systemctl = (...args: string[]) =>
+    run("systemctl", ["--user", ...args]);
   return {
     definition,
     logs: `journalctl --user -u ${systemdUnitName}`,
+    port: () => recordedPort(definition, systemdPortPattern),
     async install() {
       await mkdir(dirname(definition), { recursive: true });
       await writeFile(definition, systemdUnit(target));
       await systemctl("daemon-reload");
       await systemctl("enable", systemdUnitName);
-      await systemctl("restart", systemdUnitName);
+      await systemctl("start", systemdUnitName);
+      if ((await attempt("loginctl", ["enable-linger"])) === undefined)
+        console.log(
+          "lingering  off; run `loginctl enable-linger` so the daemon starts at boot and survives logout",
+        );
     },
     async uninstall() {
       await attempt("systemctl", ["--user", "disable", "--now", systemdUnitName]);
@@ -267,7 +287,10 @@ function systemd(target: Target): Manager {
           systemdUnitName,
         ])) ?? "0",
       );
-      return { installed: existsSync(definition), pid: pid > 0 ? pid : undefined };
+      return {
+        installed: existsSync(definition),
+        pid: pid > 0 ? pid : undefined,
+      };
     },
   };
 }
@@ -276,11 +299,13 @@ function systemd(target: Target): Manager {
 // script hidden at logon. The script owns start, stop and status so the
 // daemon is found the same way everywhere: a node.exe whose command line
 // names this main.js. Start is idempotent, so a logon never doubles the
-// daemon. Stop terminates it; the daemon's state survives that.
+// daemon. Stop terminates it; the daemon's state survives that. Nothing
+// supervises the daemon between logons.
 
 export const windowsRunKey =
   "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 export const windowsRunValue = "mcproxy";
+export const windowsPortPattern = /\$env:PORT = '(\d+)'/;
 
 export function windowsScript(target: Target, logFile: string): string {
   const q = (text: string) => `'${text.replace(/'/g, "''")}'`;
@@ -293,13 +318,14 @@ export function windowsScript(target: Target, logFile: string): string {
     "param([ValidateSet('start', 'stop', 'status')][string]$Verb = 'start')",
     "$ErrorActionPreference = 'Stop'",
     `$main = ${q(target.main)}`,
-    "$running = Get-CimInstance Win32_Process -Filter \"Name = 'node.exe'\" |",
-    "  Where-Object { $_.CommandLine -and $_.CommandLine.Contains($main) }",
+    "$running = @(Get-CimInstance Win32_Process -Filter \"Name = 'node.exe'\" |",
+    "  Where-Object { $_.CommandLine -and $_.CommandLine.Contains($main) })",
     "switch ($Verb) {",
-    "  'status' { $running | ForEach-Object { $_.ProcessId } }",
-    "  'stop' { $running | ForEach-Object { Stop-Process -Id $_.ProcessId -Force } }",
+    "  'status' { foreach ($p in $running) { $p.ProcessId } }",
+    "  'stop' { foreach ($p in $running) { Stop-Process -Id $p.ProcessId -Force } }",
     "  'start' {",
-    "    if ($running) { exit 0 }",
+    "    if ($running.Count -gt 0) { exit 0 }",
+    `    $env:Path = ${q(target.path)}`,
     ...(target.port === undefined ? [] : [`    $env:PORT = ${q(target.port)}`]),
     `    Start-Process -FilePath ${q(target.node)} -ArgumentList @(${args}) \``,
     `      -WorkingDirectory ${q(target.cwd)} -WindowStyle Hidden \``,
@@ -329,10 +355,10 @@ function windows(target: Target): Manager {
   };
   return {
     definition: `${windowsRunKey}\\${windowsRunValue} (${definition})`,
-    logs,
+    logs: `${logs} and ${logs.replace(/\.log$/, ".err.log")}`,
+    port: () => recordedPort(definition, windowsPortPattern),
     async install() {
       await mkdir(stateDir, { recursive: true });
-      await stop();
       await writeFile(definition, windowsScript(target, logs));
       await run("reg.exe", [
         "add",
@@ -363,8 +389,8 @@ function windows(target: Target): Manager {
         undefined;
       const pid = existsSync(definition)
         ? Number((await powershell("status")).trim().split(/\s+/)[0])
-        : undefined;
-      return { installed: registered, pid: pid !== undefined && pid > 0 ? pid : undefined };
+        : 0;
+      return { installed: registered, pid: pid > 0 ? pid : undefined };
     },
   };
 }
@@ -382,15 +408,59 @@ export function createManager(target: Target): Manager {
   }
 }
 
-/** Runs one verb and prints a short, human-readable result. */
+/**
+ * Rejects when something already listens on the daemon's port, such as a
+ * foreground `pnpm dev`. Otherwise the service would crash-loop on
+ * EADDRINUSE while status reports it running.
+ */
+export function assertPortFree(port: number) {
+  return new Promise<void>((resolve, reject) => {
+    const socket = connect({ host: "127.0.0.1", port });
+    socket.once("connect", () => {
+      socket.destroy();
+      reject(
+        new Error(
+          `Something already listens on 127.0.0.1:${port} (a foreground \`pnpm dev\` or \`pnpm start\`?); stop it first`,
+        ),
+      );
+    });
+    socket.once("error", () => resolve());
+  });
+}
+
+/**
+ * Runs one verb and prints a short, human-readable result. Install renders
+ * from the current environment; start and restart keep the installed
+ * definition, so they check the port recorded there, not the shell's PORT.
+ */
 export async function manage(verb: Verb, target = resolveTarget()) {
   const manager = createManager(target);
-  if (verb === "install" && !existsSync(join(target.cwd, "apps", "web", "dist", "index.html")))
-    throw new Error("Web app is not built; run `pnpm build` first");
-  if (verb === "restart") {
-    await manager.stop();
-    await manager.start();
-  } else if (verb !== "status") await manager[verb]();
+  switch (verb) {
+    case "install":
+      if (!existsSync(join(target.cwd, "apps", "web", "dist", "index.html")))
+        throw new Error("Web app is not built; run `pnpm build` first");
+      await manager.stop();
+      await assertPortFree(Number(target.port ?? 7433));
+      await manager.install();
+      break;
+    case "restart":
+      await manager.stop();
+      await assertPortFree(manager.port() ?? 7433);
+      await manager.start();
+      break;
+    case "start":
+      if ((await manager.status()).pid === undefined) {
+        await assertPortFree(manager.port() ?? 7433);
+        await manager.start();
+      }
+      break;
+    case "uninstall":
+    case "stop":
+      await manager[verb]();
+      break;
+    case "status":
+      break;
+  }
   const status = await manager.status();
   console.log(`installed  ${status.installed ? "yes" : "no"}  ${manager.definition}`);
   console.log(`running    ${status.pid === undefined ? "no" : `yes  pid=${status.pid}`}`);

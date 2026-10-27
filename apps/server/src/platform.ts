@@ -27,6 +27,14 @@ export const fileCredentials: CredentialStore = {
     return key;
   },
 };
+/** The daemon's port: PORT when set, else 7433. Throws on an invalid value. */
+export function portFromEnv(value = process.env.PORT): number {
+  if (!value) return 7433;
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65535)
+    throw new Error("PORT must be between 1 and 65535");
+  return port;
+}
 export const localPlatform: Platform = {
   stateDirectory: () =>
     process.platform === "darwin"

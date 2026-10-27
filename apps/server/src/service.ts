@@ -5,7 +5,7 @@
 import { manage, verbs, type Verb } from "./startup.js";
 
 const isVerb = (value: string | undefined): value is Verb =>
-  verbs.includes(value as Verb);
+  verbs.some((verb) => verb === value);
 
 const verb = process.argv[2];
 if (!isVerb(verb)) {
