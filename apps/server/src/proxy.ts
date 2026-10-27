@@ -122,6 +122,7 @@ export class ProxySessions {
     if (Array.isArray(header))
       throw new AppError("invalid_session", "Invalid session");
     let session = header ? this.sessions.get(header) : undefined;
+    let initializedSessionId: string | undefined;
     if (header && (!session || session.profileId !== profile.id))
       throw new AppError("invalid_session", "Session not found", 404);
     if (!session) {
@@ -170,6 +171,7 @@ export class ProxySessions {
       };
       const currentSession = session;
       this.sessions.set(id, session);
+      initializedSessionId = id;
       const cleanup = () => {
         void this.close(id);
       };
@@ -249,15 +251,23 @@ export class ProxySessions {
     }
     session.touched = Date.now();
     const active = session;
-    await session.down.handleNodeRequest(req, res, body, async () => {
-      active.get = res;
-      res.once("close", () => {
-        if (active.get === res) active.get = undefined;
+    try {
+      const status = await session.down.handleNodeRequest(req, res, body, async () => {
+        active.get = res;
+        res.once("close", () => {
+          if (active.get === res) active.get = undefined;
+        });
+        const queued = active.pending.splice(0);
+        active.pendingBytes = 0;
+        for (const message of queued) await active.down.send(message);
       });
-      const queued = active.pending.splice(0);
-      active.pendingBytes = 0;
-      for (const message of queued) await active.down.send(message);
-    });
+      // A rejected initialize never gives the client a session ID to delete.
+      if (initializedSessionId && status >= 400)
+        await this.close(initializedSessionId);
+    } catch (error) {
+      if (initializedSessionId) await this.close(initializedSessionId);
+      throw error;
+    }
     if (req.method === "DELETE" && header) await this.close(header);
   }
   async test(profile: Profile) {

@@ -29,7 +29,7 @@ export function ProviderDialog({ trigger }: { trigger: ReactNode }) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>{trigger}</DialogTrigger>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent aria-describedby={undefined} className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Add provider</DialogTitle>
         </DialogHeader>
