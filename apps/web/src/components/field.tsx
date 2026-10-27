@@ -19,7 +19,11 @@ export function visibleError(meta: FieldMeta): string | undefined {
   return meta.isTouched ? firstError(meta.errors) : undefined
 }
 
-/** Label, control, and error line for one form field. */
+/**
+ * Label, control, and error line for one form field. `content-start` keeps the
+ * rows packed when a sibling in the same grid row is taller (e.g. shows an
+ * error), so labels and inputs stay aligned across columns.
+ */
 export function Field({
   id,
   label,
@@ -34,7 +38,7 @@ export function Field({
   children: ReactNode
 }) {
   return (
-    <div className="grid gap-1.5">
+    <div className="grid content-start gap-1.5">
       <Label htmlFor={id}>{label}</Label>
       {children}
       {error ? (
