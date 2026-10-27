@@ -101,8 +101,8 @@ it("creates a toolkit from checked profiles and previews prefixes as the selecti
 })
 
 it("lists prefixed tools per member and copies client commands with the toolkit token", async () => {
-  vi.spyOn(api, "testToolkit").mockResolvedValue({
-    members: [{ profileId: acme.id, ok: true, message: "Upstream initialized", tools: ["linear_save_issue"] }],
+  vi.spyOn(api, "listTools").mockResolvedValue({
+    tools: [{ name: "save_issue", inputSchema: { type: "object" } }],
   })
   vi.spyOn(api, "revealToken").mockResolvedValue({ accessToken: "synthetic-revealed-token" })
   const writeText = vi.fn().mockResolvedValue(undefined)
@@ -112,8 +112,11 @@ it("lists prefixed tools per member and copies client commands with the toolkit 
   await flush()
   expect(container.textContent).toContain("Linear")
   expect(container.textContent).toContain("linear_*")
-  await click("List tools")
-  expect(container.textContent).toContain("linear_save_issue")
+  await click("View")
+  const sheet = document.querySelector('[role="dialog"]')?.textContent ?? ""
+  expect(sheet).toContain("Acme")
+  expect(sheet).toContain("linear_save_issue")
+  await click("Close")
   await click("Copy Claude Code command")
   expect(api.revealToken).toHaveBeenCalledWith({ kind: "toolkit", id: toolkit.id })
   const copied = writeText.mock.calls[0]?.[0]
