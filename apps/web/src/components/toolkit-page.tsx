@@ -1,9 +1,9 @@
 import { useQueries, useQuery } from "@tanstack/react-query"
 import { Link, useNavigate } from "@tanstack/react-router"
-import { ChevronRightIcon, PencilIcon, PlugZapIcon, Trash2Icon } from "lucide-react"
+import { ChevronRightIcon, PencilIcon, Trash2Icon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { absoluteEndpoint, errorMessage, type Profile, type Provider, type Toolkit } from "@/lib/api"
-import { profilesQuery, providersQuery, toolkitsQuery, useDeleteToolkit, useTestToolkit } from "@/lib/queries"
+import { profilesQuery, providersQuery, toolkitsQuery, useDeleteToolkit } from "@/lib/queries"
 import { AccessTokenField, useAccessToken } from "./access-token"
 import { ClientCommands } from "./client-commands"
 import { ConfirmDialog } from "./confirm-dialog"
@@ -12,6 +12,7 @@ import { Notice } from "./notice"
 import { ListGroup, Page, PageBody, PageHeader, Row, Rows, Section } from "./page"
 import { ProfileStatus } from "./status"
 import { ToolkitDialog } from "./toolkit-dialog"
+import { ToolsSheet } from "./tools-sheet"
 
 /** Detail workspace for one toolkit. */
 export function ToolkitPage({ toolkitId }: { toolkitId: string }) {
@@ -30,7 +31,7 @@ export function ToolkitPage({ toolkitId }: { toolkitId: string }) {
       </Notice>
     )
   }
-  // Keyed so transient state (test result, revealed token) never crosses toolkits.
+  // Keyed so transient state (revealed token, open sheet) never crosses toolkits.
   return <ToolkitDetail key={toolkit.id} toolkit={toolkit} />
 }
 
@@ -40,7 +41,6 @@ type Resolved = { profileId: string; prefix: string; provider?: Provider; profil
 function ToolkitDetail({ toolkit }: { toolkit: Toolkit }) {
   const navigate = useNavigate()
   const remove = useDeleteToolkit()
-  const test = useTestToolkit()
   const owner = { kind: "toolkit", id: toolkit.id, name: toolkit.name } as const
   const token = useAccessToken(owner)
   const endpoint = absoluteEndpoint(toolkit.endpoint)
@@ -64,12 +64,8 @@ function ToolkitDetail({ toolkit }: { toolkit: Toolkit }) {
         }
         actions={
           <>
-            <Button size="sm" onClick={() => test.mutate(toolkit)} disabled={test.isPending || toolkit.members.length === 0}>
-              <PlugZapIcon /> {test.isPending ? "Listing" : "List tools"}
-            </Button>
             <ToolkitDialog
               mode={{ kind: "edit", toolkit }}
-              onSaved={test.reset}
               trigger={
                 <Button variant="outline" size="sm">
                   <PencilIcon /> Edit
@@ -95,8 +91,6 @@ function ToolkitDetail({ toolkit }: { toolkit: Toolkit }) {
         }
       />
       <PageBody>
-        <TestOutcome test={test} members={members} />
-
         <Section title="Downstream">
           <Rows>
             <Row label="Endpoint">
@@ -106,8 +100,19 @@ function ToolkitDetail({ toolkit }: { toolkit: Toolkit }) {
               <CopyButton value={endpoint} label="Copy endpoint" />
             </Row>
             <Row label="Access token">
-              <AccessTokenField owner={owner} token={token} onRotated={test.reset} />
+              <AccessTokenField owner={owner} token={token} />
             </Row>
+            {members.length > 0 ? (
+              <Row label="Tools">
+                <ToolsSheet
+                  sources={members.map((member) => ({
+                    profileId: member.profileId,
+                    prefix: member.prefix,
+                    label: <MemberLabel member={member} />,
+                  }))}
+                />
+              </Row>
+            ) : null}
             <Row label="Token issued">
               <time dateTime={toolkit.tokenIssuedAt}>{new Date(toolkit.tokenIssuedAt).toLocaleString()}</time>
             </Row>
@@ -155,9 +160,9 @@ function ToolkitDetail({ toolkit }: { toolkit: Toolkit }) {
   )
 }
 
-function MemberRow({ member }: { member: Resolved }) {
-  const { provider, profile } = member
-  const body = (
+/** Status dot and "Provider / Profile" for a member. */
+function MemberLabel({ member: { provider, profile } }: { member: Resolved }) {
+  return (
     <>
       {profile ? <ProfileStatus status={profile.status} /> : null}
       <span className="min-w-0 flex-1 truncate">
@@ -167,6 +172,15 @@ function MemberRow({ member }: { member: Resolved }) {
         </span>
         <span className="font-medium">{profile?.name ?? "Unknown"}</span>
       </span>
+    </>
+  )
+}
+
+function MemberRow({ member }: { member: Resolved }) {
+  const { provider, profile } = member
+  const body = (
+    <>
+      <MemberLabel member={member} />
       <code className="font-mono text-[11px] text-muted-foreground">{member.prefix}*</code>
     </>
   )
@@ -182,54 +196,5 @@ function MemberRow({ member }: { member: Resolved }) {
       {body}
       <ChevronRightIcon className="size-3.5 text-muted-foreground" />
     </Link>
-  )
-}
-
-/** Per-member result of the last tools listing. */
-function TestOutcome({ test, members }: { test: ReturnType<typeof useTestToolkit>; members: Resolved[] }) {
-  if (test.isError) {
-    return (
-      <p role="alert" className="border-l-2 border-destructive pl-3 text-destructive">
-        Listing failed: {errorMessage(test.error)}
-      </p>
-    )
-  }
-  if (!test.data) return null
-  const label = (profileId: string) => {
-    const member = members.find((item) => item.profileId === profileId)
-    return member?.profile ? `${member.provider?.name ?? "Unknown"} / ${member.profile.name}` : "Removed profile"
-  }
-  return (
-    <Section title="Tools">
-      <Rows>
-        {test.data.members.map((result) => (
-          <Row
-            key={result.profileId}
-            label={
-              <span className="flex items-center gap-1.5">
-                <ProfileStatus status={result.ok ? "ready" : "error"} />
-                {label(result.profileId)}
-              </span>
-            }
-          >
-            {result.ok ? (
-              result.tools.length === 0 ? (
-                <span className="text-muted-foreground">No tools</span>
-              ) : (
-                <ul className="flex flex-wrap gap-x-3 gap-y-0.5">
-                  {result.tools.map((name) => (
-                    <li key={name}>
-                      <code className="font-mono text-xs">{name}</code>
-                    </li>
-                  ))}
-                </ul>
-              )
-            ) : (
-              <span className="text-destructive">{result.message}</span>
-            )}
-          </Row>
-        ))}
-      </Rows>
-    </Section>
   )
 }

@@ -168,7 +168,3 @@ export function useDeleteToolkit() {
     onSuccess: () => client.invalidateQueries({ queryKey: toolkitsQuery.queryKey }),
   })
 }
-
-export function useTestToolkit() {
-  return useMutation({ mutationFn: (toolkit: Toolkit) => api.testToolkit(toolkit.id) })
-}

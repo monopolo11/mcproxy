@@ -137,7 +137,7 @@ function ProfileDetail({ provider, profile }: { provider: Provider; profile: Pro
               <span>{AUTH_LABELS[profile.authType]}</span>
             </Row>
             <Row label="Tools">
-              <ToolsSheet profileId={profile.id} />
+              <ToolsSheet sources={[{ profileId: profile.id }]} />
             </Row>
             {profile.authType === "oauth" ? (
               <Row label="Authorization">
