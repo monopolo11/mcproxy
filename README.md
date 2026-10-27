@@ -18,7 +18,11 @@ node apps/server/dist/main.js
 
 The daemon serves `apps/web/dist`. `PORT` overrides the default daemon port. Do not run two daemons against the same state directory.
 
-Behind a TLS-inspecting proxy (Cloudflare WARP, Zscaler, ...) connecting to an HTTPS upstream fails with `SELF_SIGNED_CERT_IN_CHAIN` and the test reports an untrusted certificate. Node reads `NODE_EXTRA_CA_CERTS` at startup, so export the proxy's CA bundle in the shell that launches the daemon, e.g. `NODE_EXTRA_CA_CERTS=/path/to/ca.pem pnpm dev`.
+Behind a TLS-inspecting proxy (Cloudflare WARP, Zscaler, ...) connecting to an HTTPS upstream fails with `SELF_SIGNED_CERT_IN_CHAIN` and the test reports an untrusted certificate. Put the proxy's CA bundle in a `.env` at the repo root, which `pnpm dev` and `pnpm start` load, then restart:
+
+```sh
+NODE_EXTRA_CA_CERTS=/path/to/ca.pem
+```
 
 ```sh
 pnpm typecheck
