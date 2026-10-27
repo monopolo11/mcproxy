@@ -60,6 +60,23 @@ export function reason(error: unknown): string {
   return code === undefined ? error.name : `${error.name}:${code}`;
 }
 
+const untrustedCertificateCodes = new Set([
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+]);
+
+/**
+ * Whether TLS verification failed because the upstream's certificate chain
+ * ends in a CA Node does not trust, as behind a TLS-inspecting proxy.
+ */
+export function isUntrustedCertificate(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  const code = codeOf(error) ?? codeOf(error.cause);
+  return typeof code === "string" && untrustedCertificateCodes.has(code);
+}
+
 function codeOf(value: unknown) {
   if (typeof value !== "object" || value === null || !("code" in value))
     return undefined;

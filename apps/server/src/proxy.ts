@@ -16,7 +16,7 @@ import {
 import { AppError } from "./model.js";
 import { Store, type Profile, type Secret } from "./store.js";
 import { OAuth } from "./oauth.js";
-import { logger, reason } from "./log.js";
+import { isUntrustedCertificate, logger, reason } from "./log.js";
 const log = logger("proxy");
 /** Why a downstream session closed; profile and toolkit sessions share these. */
 export type CloseReason =
@@ -50,6 +50,16 @@ export class ProxyService extends Context.Service<
   ProxyService,
   ProxySessions
 >()("mcproxy/ProxySessions") {}
+/**
+ * What the UI and API show when an upstream cannot be reached. Names the fix
+ * for an untrusted certificate, since Node only reads extra CAs at startup.
+ */
+export function upstreamFailureMessage(error: unknown) {
+  return isUntrustedCertificate(error)
+    ? "Upstream certificate is not trusted. Behind a TLS-inspecting proxy, start mcproxy with NODE_EXTRA_CA_CERTS set to the proxy's CA bundle."
+    : "Upstream connection or initialization failed";
+}
+
 export class ProxySessions {
   readonly sessions = new Map<string, Session>();
   private stopping = false;
@@ -330,10 +340,7 @@ export class ProxySessions {
         this.store.profile(profile.id).status !== "needs_auth"
       )
         this.store.update(profile.id, { status: "error" });
-      return {
-        ok: false,
-        message: "Upstream connection or initialization failed",
-      };
+      return { ok: false, message: upstreamFailureMessage(error) };
     }
   }
   /** The upstream's tools, without touching profile status. */
@@ -347,11 +354,7 @@ export class ProxySessions {
         profile: this.store.label(profile),
         error: reason(error),
       });
-      throw new AppError(
-        "upstream_failed",
-        "Upstream connection or initialization failed",
-        502,
-      );
+      throw new AppError("upstream_failed", upstreamFailureMessage(error), 502);
     }
   }
   /** Runs `use` against a short-lived upstream client, always closing it. */
