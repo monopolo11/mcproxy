@@ -23,7 +23,7 @@ import {
 import { useCreateProvider } from "@/lib/queries"
 import { describedBy, ErrorText, Field, visibleError } from "./field"
 
-/** Dialog that registers an HTTP or stdio MCP server, then opens it. */
+/** Dialog that registers an HTTP or stdio MCP server (a provider), then opens it. */
 export function ProviderDialog({ trigger }: { trigger: ReactNode }) {
   const [open, setOpen] = useState(false)
   return (
@@ -31,7 +31,7 @@ export function ProviderDialog({ trigger }: { trigger: ReactNode }) {
       <DialogTrigger asChild>{trigger}</DialogTrigger>
       <DialogContent aria-describedby={undefined} className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Add provider</DialogTitle>
+          <DialogTitle>Add MCP</DialogTitle>
         </DialogHeader>
         {/* Remounting on open resets the form. */}
         {open ? <ProviderForm onDone={() => setOpen(false)} /> : null}
@@ -214,7 +214,7 @@ function ProviderForm({ onDone }: { onDone: () => void }) {
         <form.Subscribe selector={(state) => state.isSubmitting}>
           {(submitting) => (
             <Button type="submit" disabled={submitting}>
-              {submitting ? "Adding" : "Add provider"}
+              {submitting ? "Adding" : "Add MCP"}
             </Button>
           )}
         </form.Subscribe>
