@@ -97,7 +97,7 @@ function ProviderForm({
 
   const form = useForm({
     defaultValues: emptyProviderForm,
-    validators: { onChange: providerFormSchema },
+    validators: { onSubmit: providerFormSchema },
     onSubmit: async ({ value }) => {
       const { provider } = await create.mutateAsync(toProviderInput(value))
       // Credentials only carry over while the transport still matches the paste.
@@ -160,7 +160,7 @@ function ProviderForm({
         </p>
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid items-start gap-4 sm:grid-cols-2">
         <form.Field
           name="name"
           listeners={{

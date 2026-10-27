@@ -135,7 +135,7 @@ export function ProfileForm({
         void form.handleSubmit().catch(() => undefined)
       }}
     >
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid items-start gap-4 sm:grid-cols-2">
         <form.Field
           name="name"
           listeners={{
@@ -295,7 +295,7 @@ function useProfileForm(
 ) {
   return useForm({
     defaultValues,
-    validators: { onChange: schema },
+    validators: { onSubmit: schema },
     onSubmit: ({ value }) => submit(value),
   })
 }
@@ -397,7 +397,7 @@ function OAuthFields({ form }: { form: ProfileForm }) {
   return (
     <div className="grid gap-4">
       <p>Leave blank to use dynamic client registration. Connect after saving.</p>
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid items-start gap-4 sm:grid-cols-2">
         <form.Field name="clientId">
           {(field) => (
             <Field id="oauth-client-id" label="Client ID">

@@ -60,10 +60,25 @@ export type ToolkitTestResult = {
 /** Profiles and toolkits both issue a downstream token through the same routes. */
 export type TokenOwner = { kind: "profile" | "toolkit"; id: string }
 
+/** JSON Schema object as the upstream sent it; unvalidated, so read it defensively. */
+export type JsonSchema = { [key: string]: unknown }
+
+/** A tool as advertised by the upstream's tools/list. */
+export type Tool = {
+  name: string
+  title?: string
+  description?: string
+  inputSchema: JsonSchema
+  outputSchema?: JsonSchema
+  annotations?: { title?: string; readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean; openWorldHint?: boolean }
+}
+
 export type TestResult = {
   ok: boolean
   message: string
   capabilities?: Record<string, unknown>
+  /** Present on success; empty when the upstream has no tools capability. */
+  tools?: Tool[]
 }
 
 /** Failure from the daemon, or from reaching it at all (`status` 0). */
@@ -165,6 +180,9 @@ export const api = {
     request<{ authorizationUrl: string }>("POST", `/api/profiles/${id(profileId)}/oauth/start`),
   testProfile: (profileId: string) =>
     request<TestResult>("POST", `/api/profiles/${id(profileId)}/test`),
+  /** Connects upstream to list tools; slow, so callers fetch on demand. */
+  listTools: (profileId: string) =>
+    request<{ tools: Tool[] }>("GET", `/api/profiles/${id(profileId)}/tools`),
 
   listToolkits: () => request<{ toolkits: Toolkit[] }>("GET", "/api/toolkits"),
   createToolkit: (input: ToolkitInput) =>

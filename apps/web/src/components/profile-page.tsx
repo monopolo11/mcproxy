@@ -15,6 +15,7 @@ import { OAuthControl } from "./oauth-control"
 import { Page, PageBody, PageHeader, Row, Rows, Section } from "./page"
 import { ProfileDialog } from "./profile-dialog"
 import { ProfileStatus } from "./status"
+import { ToolsSheet } from "./tools-sheet"
 
 /** Detail workspace for one profile. */
 export function ProfilePage({ providerId, profileId }: { providerId: string; profileId: string }) {
@@ -134,6 +135,9 @@ function ProfileDetail({ provider, profile }: { provider: Provider; profile: Pro
             </Row>
             <Row label="Credentials">
               <span>{AUTH_LABELS[profile.authType]}</span>
+            </Row>
+            <Row label="Tools">
+              <ToolsSheet profileId={profile.id} />
             </Row>
             {profile.authType === "oauth" ? (
               <Row label="Authorization">
