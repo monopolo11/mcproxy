@@ -25,7 +25,7 @@ export class DownstreamTransport extends WebStandardStreamableHTTPServerTranspor
     res.flushHeaders();
     if (!response.body) {
       res.end();
-      return;
+      return response.status;
     }
     const reader = response.body.getReader();
     const cancel = () => {
@@ -54,5 +54,6 @@ export class DownstreamTransport extends WebStandardStreamableHTTPServerTranspor
       res.off("close", cancel);
       reader.releaseLock();
     }
+    return response.status;
   }
 }

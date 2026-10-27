@@ -29,6 +29,7 @@ export type Profile = {
   slug: string
   authType: AuthType
   status: "ready" | "needs_auth" | "error"
+  oauthStatus?: "idle" | "pending" | "error"
   endpoint: string
   createdAt: string
   lastError?: string

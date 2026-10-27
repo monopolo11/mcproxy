@@ -186,7 +186,30 @@ export async function createProxyServer(options: ServerOptions = {}) {
             "oauth_state",
             "Missing authorization state or code",
           );
-        await oauth.callback(state, code, url.searchParams.get("error"));
+        try {
+          const profileId = await oauth.callback(
+            state,
+            code,
+            url.searchParams.get("error"),
+          );
+          await sessions.closeProfile(profileId);
+        } catch (error) {
+          const failure = error instanceof AppError
+            ? error
+            : new AppError("oauth_failed", "Authorization failed. Connect again to retry");
+          res.writeHead(failure.status, {
+            "content-type": "text/html; charset=utf-8",
+            "cache-control": "no-store",
+          });
+          const message = failure.message.replace(
+            /[&<>"']/g,
+            (character) => `&#${character.charCodeAt(0)};`,
+          );
+          res.end(
+            `<!doctype html><title>Authorization failed</title><p>${message}</p><p>You can close this window.</p>`,
+          );
+          return;
+        }
         res.writeHead(200, {
           "content-type": "text/html",
           "cache-control": "no-store",
@@ -312,9 +335,7 @@ export async function createProxyServer(options: ServerOptions = {}) {
             parts[4] === "start" &&
             method === "POST"
           ) {
-            const authorization = await oauth
-              .start(id)
-              .finally(() => sessions.closeProfile(id));
+            const authorization = await oauth.start(id);
             json(res, 200, authorization);
             return;
           }

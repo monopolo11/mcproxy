@@ -41,6 +41,7 @@ type Profile = {
   slug: string;
   authType: AuthInput["type"];
   status: "ready" | "needs_auth" | "error";
+  oauthStatus?: "idle" | "pending" | "error";
   endpoint: string;
   createdAt: string;
   lastError?: string;
@@ -57,6 +58,8 @@ type Profile = {
 - `DELETE /api/profiles/:id` returns 204 and closes sessions.
 - `POST /api/profiles/:id/token` rotates the downstream token, returns `{ accessToken: string }`. Immediately invalidate the old token and existing sessions.
 - `POST /api/profiles/:id/oauth/start` returns `{ authorizationUrl: string }`. UI opens the URL after the response. The daemon handles discovery, PKCE, callback, encrypted token storage, and refresh. Callback is `GET /oauth/callback`; return a minimal completion page, and UI polls profile state while authorization is pending.
+
+OAuth authorization state is separate from connection readiness. A reconnect preserves usable current credentials and sessions while a new exchange is pending. Successful exchange replaces the credentials and closes existing sessions. Denial, failure, or expiration appears through `oauthStatus: "error"` and a safe `lastError`; it does not discard the current credentials. An unauthenticated resource probe discovers challenge-provided metadata before well-known fallback. Refresh stays bound to the saved issuer.
 - `POST /api/profiles/:id/test` returns `{ ok: boolean, message: string, capabilities?: Record<string, unknown> }`. Test connection and initialization only, without invoking tools.
 
 Validate slugs, uniqueness, body sizes, transport/auth compatibility, and forbidden hop-by-hop/custom routing headers. Protect credentials and refresh tokens at rest. Redact tokens from all logs and errors. Bind sessions to both provider and profile; authenticate every downstream HTTP request, including GET and DELETE. Prevent sharing upstream sessions or stdio processes across profiles or downstream clients unless correctness is proven. Dispose child processes and streams on termination.

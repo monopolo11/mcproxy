@@ -1,8 +1,8 @@
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query"
 import { api, type Profile, type ProfileInput, type ProfilePatch, type ProviderInput } from "./api"
 
-// Query keys and cache-aware mutations. Server responses never contain upstream
-// secrets, and one-time access tokens are returned to the caller, not cached.
+// Query data excludes secrets. Sensitive mutations are discarded when their
+// observer resets or unmounts; token reveal components own the visible copy.
 
 export const healthQuery = queryOptions({
   queryKey: ["health"],
@@ -44,6 +44,7 @@ export function useDeleteProvider() {
 export function useCreateProfile(providerId: string) {
   const client = useQueryClient()
   return useMutation({
+    gcTime: 0,
     mutationFn: (input: ProfileInput) => api.createProfile(providerId, input),
     onSuccess: () => client.invalidateQueries({ queryKey: profilesQuery(providerId).queryKey }),
   })
@@ -62,6 +63,7 @@ function useReplaceProfile() {
 export function useUpdateProfile() {
   const replace = useReplaceProfile()
   return useMutation({
+    gcTime: 0,
     mutationFn: ({ id, patch }: { id: string; patch: ProfilePatch }) =>
       api.updateProfile(id, patch),
     onSuccess: ({ profile }) => replace(profile),
@@ -78,7 +80,7 @@ export function useDeleteProfile() {
 }
 
 export function useRotateToken() {
-  return useMutation({ mutationFn: (profileId: string) => api.rotateToken(profileId) })
+  return useMutation({ gcTime: 0, mutationFn: (profileId: string) => api.rotateToken(profileId) })
 }
 
 export function useTestProfile() {
@@ -92,5 +94,5 @@ export function useTestProfile() {
 }
 
 export function useStartOAuth() {
-  return useMutation({ mutationFn: (profileId: string) => api.startOAuth(profileId) })
+  return useMutation({ gcTime: 0, mutationFn: (profileId: string) => api.startOAuth(profileId) })
 }

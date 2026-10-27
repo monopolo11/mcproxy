@@ -54,7 +54,16 @@ export interface Secret {
   tokens?: OAuthTokens;
   expiresAt?: number;
   discovery?: OAuthDiscoveryState;
-  pending?: { state: string; verifier?: string; expiresAt: number };
+  oauthError?: string;
+  pending?: {
+    state: string;
+    verifier?: string;
+    expiresAt: number;
+    client?: OAuthClientInformationMixed;
+    discovery?: OAuthDiscoveryState;
+    tokens?: OAuthTokens;
+    tokenExpiresAt?: number;
+  };
 }
 export const hash = (token: string) =>
   createHash("sha256").update(token).digest("hex");
@@ -188,6 +197,11 @@ export class Store {
   }
   view(p: Profile, base: string) {
     const provider = this.provider(p.providerId);
+    const secret = p.authType === "oauth" ? this.secret(p.id) : undefined;
+    const expired = secret?.pending && secret.pending.expiresAt <= Date.now();
+    const lastError = expired
+      ? "Authorization expired. Connect again to retry"
+      : secret?.oauthError;
     return {
       id: p.id,
       providerId: p.providerId,
@@ -195,6 +209,10 @@ export class Store {
       slug: p.slug,
       authType: p.authType,
       status: p.status,
+      ...(secret ? {
+        oauthStatus: lastError ? "error" : secret.pending ? "pending" : "idle",
+        ...(lastError ? { lastError } : {}),
+      } : {}),
       createdAt: p.createdAt,
       endpoint: `${base}/mcps/${provider.slug}/${p.slug}`,
     };

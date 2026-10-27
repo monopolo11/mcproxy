@@ -36,9 +36,13 @@ Create a provider with `POST /api/providers`, then create profiles with `POST /a
 
 Put secrets in profile authentication fields. Provider URLs, command arguments and names are configuration returned by the management API.
 
-HTTP upstream profiles support no auth, bearer auth, validated custom headers and OAuth. Stdio profiles support no auth or an environment map. Stdio commands use an argument array without a shell, inherit only PATH and HOME, and receive the configured profile environment. Child stderr is discarded to prevent credential leakage.
+HTTP upstream profiles support no auth, bearer auth, validated custom headers and OAuth. Stdio profiles support no auth or an environment map. Stdio commands use an argument array without a shell and the SDK's limited default environment, with explicit PATH, HOME, and profile environment values. Child stderr is discarded to prevent credential leakage.
 
 `POST /api/profiles/:id/oauth/start` returns an authorization URL for the UI to open. The daemon handles protected-resource and authorization-server discovery, dynamic registration or configured client credentials, PKCE, callback state validation and encrypted token persistence. Refresh is serialized per profile, runs before expired-token requests and retries once after a 401. The callback is `/oauth/callback`. Pending flows expire after ten minutes and callbacks cannot be replayed.
+
+Discovery honors upstream `WWW-Authenticate` metadata URLs as well as well-known locations. Reconnect stages new authorization separately, keeping working credentials and sessions until the exchange succeeds. A denied, failed, or abandoned reconnect leaves the current connection intact. Successful replacement closes existing sessions so clients reinitialize with the new credentials. Refresh uses the saved issuer discovery; reconnect explicitly if the upstream changes authorization servers.
+
+OAuth profiles expose `oauthStatus` independently of connection readiness: `pending`, `error`, or `idle`. Safe `lastError` messages report failed or expired authorization without exposing upstream error descriptions. The UI clears sensitive mutation data after forms and token dialogs finish.
 
 Connection testing initializes the upstream without calling tools. Non-OAuth profiles initially report `ready` to mean their configuration can be used; this does not claim a successful connection. Use the test endpoint to verify connectivity.
 

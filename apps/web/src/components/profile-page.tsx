@@ -64,6 +64,7 @@ function ProfileDetail({ provider, profile }: { provider: Provider; profile: Pro
           <ProfileDialog
             provider={provider}
             mode={{ kind: "edit", profile }}
+            onSaved={test.reset}
             trigger={
               <Button variant="ghost" size="sm">
                 <PencilIcon /> Edit
@@ -106,7 +107,7 @@ function ProfileDetail({ provider, profile }: { provider: Provider; profile: Pro
           </div>
         </Row>
         <Row label="Access token">
-          <AccessToken profile={profile} endpoint={endpoint} />
+          <AccessToken profile={profile} endpoint={endpoint} onRotated={test.reset} />
         </Row>
       </Section>
 
@@ -123,7 +124,7 @@ function ProfileDetail({ provider, profile }: { provider: Provider; profile: Pro
         </Row>
         {profile.authType === "oauth" ? (
           <Row label="Authorization">
-            <OAuthControl profile={profile} />
+            <OAuthControl profile={profile} onConnectionChange={test.reset} />
           </Row>
         ) : null}
       </Section>
@@ -165,13 +166,13 @@ function TestOutcome({ test }: { test: ReturnType<typeof useTestProfile> }) {
 }
 
 /** Downstream token: hashed at rest, so only rotation can produce a visible value. */
-function AccessToken({ profile, endpoint }: { profile: Profile; endpoint: string }) {
+function AccessToken({ profile, endpoint, onRotated }: { profile: Profile; endpoint: string; onRotated: () => void }) {
   const rotate = useRotateToken()
   const [token, setToken] = useState<string>()
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <span className="font-mono text-xs" aria-label="Hidden">••••••••••••</span>
+      <span className="font-mono text-xs"><span aria-hidden="true">••••••••••••</span><span className="sr-only">Hidden</span></span>
       <ConfirmDialog
         trigger={
           <Button variant="ghost" size="xs">
@@ -185,10 +186,12 @@ function AccessToken({ profile, endpoint }: { profile: Profile; endpoint: string
         onConfirm={async () => {
           const result = await rotate.mutateAsync(profile.id)
           setToken(result.accessToken)
+          rotate.reset()
+          onRotated()
         }}
       />
       <Dialog open={token !== undefined} onOpenChange={(open) => !open && setToken(undefined)}>
-        <DialogContent className="sm:max-w-xl" onInteractOutside={(event) => event.preventDefault()}>
+        <DialogContent aria-describedby={undefined} className="sm:max-w-xl" onInteractOutside={(event) => event.preventDefault()}>
           <DialogHeader>
             <DialogTitle>New access token</DialogTitle>
           </DialogHeader>

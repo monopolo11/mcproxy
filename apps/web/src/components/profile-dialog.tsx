@@ -38,10 +38,12 @@ export function ProfileDialog({
   provider,
   mode,
   trigger,
+  onSaved,
 }: {
   provider: Provider
   mode: Mode
   trigger: ReactNode
+  onSaved?: () => void
 }) {
   const [open, setOpen] = useState(false)
   const [created, setCreated] = useState<{ token: string; endpoint: string }>()
@@ -55,6 +57,7 @@ export function ProfileDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>{trigger}</DialogTrigger>
       <DialogContent
+        aria-describedby={undefined}
         className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl"
         // The token view must be dismissed deliberately.
         onInteractOutside={(event) => created && event.preventDefault()}
@@ -76,7 +79,10 @@ export function ProfileDialog({
             provider={provider}
             mode={mode}
             onCreated={setCreated}
-            onSaved={() => onOpenChange(false)}
+            onSaved={() => {
+              onSaved?.()
+              onOpenChange(false)
+            }}
           />
         ) : null}
       </DialogContent>
@@ -118,10 +124,12 @@ function ProfileForm({
   const form = useProfileForm(defaultValues, schema, async (value) => {
     if (mode.kind === "edit") {
       await update.mutateAsync({ id: mode.profile.id, patch: toProfilePatch(value) })
+      update.reset()
       onSaved()
       return
     }
     const { profile, accessToken } = await create.mutateAsync(toProfileInput(value))
+    create.reset()
     onCreated({ token: accessToken, endpoint: absoluteEndpoint(profile.endpoint) })
     await navigate({
       to: "/providers/$providerId/profiles/$profileId",
@@ -202,7 +210,6 @@ function ProfileForm({
                   type="button"
                   variant="ghost"
                   size="xs"
-                  aria-pressed={field.state.value}
                   onClick={() => field.handleChange(!field.state.value)}
                 >
                   {field.state.value ? "Keep current" : "Replace"}
@@ -214,7 +221,7 @@ function ProfileForm({
 
         {!replaceAuth ? (
           <p className="text-sm">
-            {AUTH_LABELS[authType]}. Stored values stay hidden and unchanged.
+            {AUTH_LABELS[mode.kind === "edit" ? mode.profile.authType : authType]}. Stored values stay hidden and unchanged.
           </p>
         ) : (
           <>
@@ -323,7 +330,7 @@ function PairsEditor({ form, name }: { form: ProfileForm; name: "headers" | "env
               <span className="text-sm font-medium">
                 {name === "headers" ? "Upstream headers" : "Upstream environment"}
               </span>
-              <Button type="button" variant="ghost" size="xs" aria-pressed={reveal} onClick={() => setReveal(!reveal)}>
+              <Button type="button" variant="ghost" size="xs" onClick={() => setReveal(!reveal)}>
                 {reveal ? "Hide values" : "Show values"}
               </Button>
             </div>
@@ -382,7 +389,7 @@ function PairsEditor({ form, name }: { form: ProfileForm; name: "headers" | "env
               </div>
             ))}
             <div className="flex items-center justify-between gap-2">
-              {listError ? <p className="text-xs text-destructive">{listError}</p> : <span />}
+              {listError ? <p role="alert" className="text-xs text-destructive">{listError}</p> : <span />}
               <Button
                 type="button"
                 variant="ghost"

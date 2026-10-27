@@ -4,6 +4,7 @@ import {
   emptyProviderForm,
   profileSchemaFor,
   providerFormSchema,
+  slugify,
   toProfileInput,
   toProfilePatch,
   toProviderInput,
@@ -45,6 +46,17 @@ describe("provider form", () => {
     const stdio = { ...http, transport: "stdio" as const, command: "node" }
     expect(providerFormSchema.safeParse(stdio).success).toBe(true)
   })
+
+  it("rejects credentials and fragments in provider URLs", () => {
+    for (const url of ["https://user:password@example.com/mcp", "https://example.com/mcp#fragment"]) {
+      const values = { ...emptyProviderForm, name: "A", slug: "a", url }
+      expect(issues(providerFormSchema.safeParse(values))).toEqual(["url: Remove credentials and fragments from the URL"])
+    }
+  })
+
+  it("keeps accented words together in generated slugs", () => {
+    expect(slugify("Résumé Ångström")).toBe("resume-angstrom")
+  })
 })
 
 describe("profile form", () => {
@@ -82,6 +94,14 @@ describe("profile form", () => {
 
     const oauth = profile({ authType: "oauth", scopes: "read, write  admin" })
     expect(toProfileInput(oauth).auth).toEqual({ type: "oauth", scopes: ["read", "write", "admin"] })
+  })
+
+  it("rejects routing and browser-controlled authentication headers", () => {
+    for (const key of ["Forwarded", "X-Forwarded-For", "X-Real-IP", "Sec-Fetch-Site"]) {
+      expect(issues(profileSchemaFor("http").safeParse(profile({ authType: "headers", headers: [{ key, value: "value" }] })))).toEqual([
+        `headers.0.key: ${key} is managed by the proxy`,
+      ])
+    }
   })
 
   it("omits auth from edits unless credentials are being replaced", () => {

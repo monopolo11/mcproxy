@@ -10,7 +10,7 @@ const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
 
 /** Headers the proxy controls itself; mirrors the daemon's forbidden list. */
 export const RESERVED_HEADER =
-  /^(host|connection|content-length|transfer-encoding|upgrade|keep-alive|te|trailer|proxy-.*|mcp-.*|origin|accept|content-type|cookie|set-cookie|x-mcproxy-.*)$/i
+  /^(host|connection|content-length|transfer-encoding|upgrade|keep-alive|te|trailer|proxy-.*|mcp-.*|forwarded|x-forwarded-.*|x-real-ip|sec-.*|origin|accept|content-type|cookie|set-cookie|x-mcproxy-.*)$/i
 
 /** Upstream auth forms each transport can carry. */
 export const AUTH_TYPES_BY_TRANSPORT = {
@@ -30,6 +30,7 @@ export function slugify(value: string): string {
   return value
     .toLowerCase()
     .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 80)
@@ -60,6 +61,8 @@ export const providerFormSchema = z
       const url = URL.parse(value.url.trim())
       if (!url || (url.protocol !== "http:" && url.protocol !== "https:")) {
         ctx.addIssue({ code: "custom", path: ["url"], message: "Enter an http or https URL" })
+      } else if (url.username || url.password || url.hash) {
+        ctx.addIssue({ code: "custom", path: ["url"], message: "Remove credentials and fragments from the URL" })
       }
     } else if (!value.command.trim()) {
       ctx.addIssue({ code: "custom", path: ["command"], message: "Required" })
