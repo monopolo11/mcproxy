@@ -39,6 +39,8 @@ export const profiles = sqliteTable(
     authType: text().$type<AuthInput["type"]>().notNull(),
     secret: text().notNull(),
     tokenHash: text().notNull(),
+    tokenSealed: text(),
+    tokenIssuedAt: text(),
     status: text().$type<"ready" | "needs_auth" | "error">().notNull(),
     createdAt: text().notNull(),
   },
@@ -156,12 +158,40 @@ export class Store {
       slug: input.slug,
       authType: input.auth.type,
       secret: this.vault.seal({ auth: input.auth }),
-      tokenHash: hash(accessToken),
+      ...this.issueToken(accessToken),
       status: input.auth.type === "oauth" ? "needs_auth" : "ready",
       createdAt: new Date().toISOString(),
     };
     this.db.insert(profiles).values(p).run();
     return { profile: p, accessToken };
+  }
+  /** Hash for authentication plus the sealed value so the UI can show it again. */
+  private issueToken(accessToken: string) {
+    return {
+      tokenHash: hash(accessToken),
+      tokenSealed: this.vault.seal(accessToken),
+      tokenIssuedAt: new Date().toISOString(),
+    };
+  }
+  /** Replaces the downstream token; the caller closes the profile's sessions. */
+  rotateToken(id: string) {
+    const accessToken = token();
+    this.db
+      .update(profiles)
+      .set(this.issueToken(accessToken))
+      .where(eq(profiles.id, id))
+      .run();
+    return accessToken;
+  }
+  revealToken(id: string) {
+    const sealed = this.profile(id).tokenSealed;
+    if (!sealed)
+      throw new AppError(
+        "token_unavailable",
+        "This token predates reveal support. Rotate it to get one you can view",
+        409,
+      );
+    return this.vault.open<string>(sealed);
   }
   secret(id: string) {
     return this.vault.open<Secret>(this.profile(id).secret);
@@ -214,6 +244,7 @@ export class Store {
         ...(lastError ? { lastError } : {}),
       } : {}),
       createdAt: p.createdAt,
+      ...(p.tokenIssuedAt ? { tokenIssuedAt: p.tokenIssuedAt } : {}),
       endpoint: `${base}/mcps/${provider.slug}/${p.slug}`,
     };
   }

@@ -83,6 +83,11 @@ export function useRotateToken() {
   return useMutation({ gcTime: 0, mutationFn: (profileId: string) => api.rotateToken(profileId) })
 }
 
+/** Fetches the current token on demand; the caller keeps it in component state. */
+export function useRevealToken() {
+  return useMutation({ gcTime: 0, mutationFn: (profileId: string) => api.revealToken(profileId) })
+}
+
 export function useTestProfile() {
   const client = useQueryClient()
   return useMutation({
