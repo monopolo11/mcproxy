@@ -1,0 +1,155 @@
+// Typed client for the daemon management API (docs/implementation-contract.md).
+// Every request is same-origin and carries the CSRF marker header.
+
+export type Transport =
+  | { type: "http"; url: string }
+  | { type: "stdio"; command: string; args: string[]; cwd?: string }
+
+export type TransportType = Transport["type"]
+
+export type ProviderInput = { name: string; slug: string; transport: Transport }
+export type Provider = ProviderInput & { id: string; createdAt: string }
+
+export type AuthInput =
+  | { type: "none" }
+  | { type: "bearer"; token: string }
+  | { type: "headers"; headers: Record<string, string> }
+  | { type: "env"; env: Record<string, string> }
+  | { type: "oauth"; clientId?: string; clientSecret?: string; scopes?: string[] }
+
+export type AuthType = AuthInput["type"]
+
+export type ProfileInput = { name: string; slug: string; auth: AuthInput }
+export type ProfilePatch = { name?: string; auth?: AuthInput }
+
+export type Profile = {
+  id: string
+  providerId: string
+  name: string
+  slug: string
+  authType: AuthType
+  status: "ready" | "needs_auth" | "error"
+  oauthStatus?: "idle" | "pending" | "error"
+  endpoint: string
+  createdAt: string
+  lastError?: string
+}
+
+export type Health = { status: "ok"; version: string; platform: string }
+
+export type TestResult = {
+  ok: boolean
+  message: string
+  capabilities?: Record<string, unknown>
+}
+
+/** Failure from the daemon, or from reaching it at all (`status` 0). */
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+  ) {
+    super(message)
+    this.name = "ApiError"
+  }
+}
+
+function isErrorBody(body: unknown): body is { error: { code: string; message: string } } {
+  if (typeof body !== "object" || body === null || !("error" in body)) return false
+  const { error } = body
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    "message" in error &&
+    typeof error.code === "string" &&
+    typeof error.message === "string"
+  )
+}
+
+/**
+ * Sends one management request. The response type is declared per endpoint
+ * below; `undefined` covers 204 responses.
+ */
+export async function request<T>(
+  method: "GET" | "POST" | "PATCH" | "DELETE",
+  path: string,
+  body?: unknown,
+  fetcher: typeof fetch = fetch,
+): Promise<T> {
+  const headers: Record<string, string> = { "X-Mcproxy-Request": "1" }
+  if (body !== undefined) headers["Content-Type"] = "application/json"
+
+  let response: Response
+  try {
+    response = await fetcher(path, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      credentials: "same-origin",
+    })
+  } catch {
+    throw new ApiError(0, "unreachable", "Cannot reach the mcproxy daemon.")
+  }
+
+  if (response.status === 204) return undefined as T
+
+  const parsed: unknown = await response.json().catch(() => undefined)
+  if (!response.ok) {
+    if (isErrorBody(parsed)) {
+      throw new ApiError(response.status, parsed.error.code, parsed.error.message)
+    }
+    // Vite's dev proxy answers 5xx without a JSON body when the daemon is down.
+    throw response.status >= 500
+      ? new ApiError(response.status, "unreachable", "Cannot reach the mcproxy daemon.")
+      : new ApiError(response.status, "http_error", `Request failed with HTTP ${response.status}.`)
+  }
+  if (parsed === undefined) {
+    throw new ApiError(response.status, "invalid_response", "The daemon returned an unreadable response.")
+  }
+  return parsed as T
+}
+
+const id = encodeURIComponent
+
+export const api = {
+  health: () => request<Health>("GET", "/api/health"),
+
+  listProviders: () => request<{ providers: Provider[] }>("GET", "/api/providers"),
+  createProvider: (input: ProviderInput) =>
+    request<{ provider: Provider }>("POST", "/api/providers", input),
+  deleteProvider: (providerId: string) =>
+    request<undefined>("DELETE", `/api/providers/${id(providerId)}`),
+
+  listProfiles: (providerId: string) =>
+    request<{ profiles: Profile[] }>("GET", `/api/providers/${id(providerId)}/profiles`),
+  createProfile: (providerId: string, input: ProfileInput) =>
+    request<{ profile: Profile; accessToken: string }>(
+      "POST",
+      `/api/providers/${id(providerId)}/profiles`,
+      input,
+    ),
+  updateProfile: (profileId: string, patch: ProfilePatch) =>
+    request<{ profile: Profile }>("PATCH", `/api/profiles/${id(profileId)}`, patch),
+  deleteProfile: (profileId: string) =>
+    request<undefined>("DELETE", `/api/profiles/${id(profileId)}`),
+  rotateToken: (profileId: string) =>
+    request<{ accessToken: string }>("POST", `/api/profiles/${id(profileId)}/token`),
+  startOAuth: (profileId: string) =>
+    request<{ authorizationUrl: string }>("POST", `/api/profiles/${id(profileId)}/oauth/start`),
+  testProfile: (profileId: string) =>
+    request<TestResult>("POST", `/api/profiles/${id(profileId)}/test`),
+}
+
+/** Human readable message for any thrown value. */
+export function errorMessage(error: unknown): string {
+  if (error instanceof ApiError) return error.message
+  if (error instanceof Error) return error.message
+  return "Unexpected error."
+}
+
+/** Absolute endpoint URL, tolerating a path-only value from the daemon. */
+export function absoluteEndpoint(endpoint: string): string {
+  return new URL(endpoint, window.location.origin).toString()
+}

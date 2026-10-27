@@ -1,0 +1,12 @@
+{
+  "name": "mcproxy",
+  "private": true,
+  "packageManager": "pnpm@11.21.0",
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "build": "pnpm --filter @mcproxy/web build && pnpm --filter @mcproxy/server build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "start": "pnpm --filter @mcproxy/server start"
+  }
+}

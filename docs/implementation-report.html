@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>mcproxy implementation</title>
+<style>
+:root{color-scheme:dark;font:15px/1.55 system-ui,sans-serif;background:#000;color:#fff}
+body{max-width:960px;margin:0 auto;padding:28px 20px 48px}h1{font-size:24px;margin:0 0 16px}h2{font-size:17px;margin:28px 0 10px}p{margin:10px 0}table{width:100%;border-collapse:collapse}th,td{text-align:left;vertical-align:top;border-bottom:1px solid #303030;padding:10px 8px}th:first-child,td:first-child{padding-left:0}th{font-weight:600}code,pre{font:13px/1.6 ui-monospace,monospace}pre{background:#141414;padding:14px;overflow:auto}a{color:#a7c9ff}ul{padding-left:20px}li{margin:6px 0}.flow{padding:14px 0;border-top:1px solid #303030;border-bottom:1px solid #303030}footer{margin-top:32px;border-top:1px solid #303030;padding-top:12px}@media(max-width:600px){body{padding:20px 14px}th,td{padding:8px 5px;font-size:13px}code{overflow-wrap:anywhere}}
+</style>
+</head>
+<body>
+<main>
+<h1>mcproxy implementation</h1>
+<p>A local MCP proxy with one endpoint and stable bearer token per provider profile. Upstream credentials and OAuth refresh stay in the daemon. Tools, resources, prompts, schemas, results, and protocol errors retain their original names and content.</p>
+<p class="flow">Provider configuration &rarr; authenticated profile &rarr; <code>/mcps/linear/profile1</code><br>A second profile has separate credentials, token, sessions, and endpoint.</p>
+<h2>Implemented</h2>
+<table>
+<thead><tr><th>Area</th><th>Behavior</th></tr></thead>
+<tbody>
+<tr><td>Providers</td><td>Streamable HTTP upstreams and local stdio commands. Provider setup, profile management, connection testing, deletion, and token rotation.</td></tr>
+<tr><td>Authentication</td><td>No authentication, bearer tokens, custom HTTP headers, stdio environment variables, or OAuth. OAuth discovery, registration or configured client credentials, PKCE, callback state validation, encrypted persistence, and serialized refresh.</td></tr>
+<tr><td>Isolation</td><td>Every downstream request authenticates against its profile. Each downstream session gets a separate upstream transport. Credential changes, deletion, and rotation close sessions. Stale OAuth responses cannot overwrite changed credentials.</td></tr>
+<tr><td>Storage</td><td>SQLite through Drizzle, transactional migrations, AES-256-GCM encryption for upstream secrets, and hashes of downstream tokens. The encryption key and state directory have owner-only permissions.</td></tr>
+<tr><td>Interface</td><td>React, TanStack Router, Query and Form, Vite, Tailwind, and shadcn. Dense dark provider/profile workspace, one-time token reveal, copy controls, OAuth connection, connection testing, and confirmation for destructive actions.</td></tr>
+<tr><td>Runtime</td><td>TypeScript and Effect 4.0.6. Node 22 and pnpm 11. The daemon binds to 127.0.0.1:7433. Production serves the built UI; Vite development uses 127.0.0.1:5173.</td></tr>
+</tbody>
+</table>
+<h2>Run locally</h2>
+<pre>pnpm install
+pnpm dev</pre>
+<p>For the built application, run <code>pnpm build</code> followed by <code>pnpm start</code>. The process runs in the foreground.</p>
+<h2>Verification</h2>
+<p>Full workspace typechecks and production builds pass. All 22 tests pass: 13 backend tests and 9 frontend tests. Frozen-lockfile installation also passes.</p>
+<ul>
+<li>HTTP and stdio discovery, tool calls, resources, prompts, errors, token enforcement, profile isolation, and process cleanup.</li>
+<li>OAuth state validation, PKCE, refresh after restart, profile replacement during token exchange, and denial handling, using a deterministic local fixture.</li>
+<li>Server requests during HTTP initialization and concurrent POST calls, message delivery before GET opens, and bounded queue overflow.</li>
+<li>Frontend form payloads and validation, API failures, and required management headers. Vite's development proxy was checked for successful management calls and foreign-origin rejection.</li>
+</ul>
+<h2>Recorded demos</h2>
+<p>Four local MP4 recordings accompany the source. They show HTTP provider setup with two profiles, simulated OAuth in the management UI, the separate simulated consent tab, and stdio provider setup. Recordings use disposable daemon state and synthetic credentials. The OAuth provider is a local fixture, not a real external account.</p>
+<h2>Current limits</h2>
+<ul>
+<li>macOS was verified. Linux and Windows filesystem boundaries are present but those platforms were not tested.</li>
+<li>Legacy HTTP+SSE transport and event-ID replay or resumption are not implemented. HTTP upstreams use single-message Streamable HTTP.</li>
+<li>Unsolicited messages require a downstream GET SSE stream. During gaps, each session queues up to 128 messages or 1 MiB. Overflow closes the session. Messages already handed to a disconnected stream may be lost.</li>
+<li>Stdio callbacks require GET after initialization. A stdio server that requires a client callback during initialization is unsupported. MCP content is preserved within these transport limits.</li>
+<li>OAuth scope escalation requires reconnecting with the requested scopes. Real provider interoperability still needs testing with actual accounts.</li>
+<li>Keychain integration, login startup, and tracking detached subprocess grandchildren are not implemented.</li>
+<li>The production JavaScript bundle is approximately 679 kB, or 205 kB gzip. Vite reports its bundle-size warning.</li>
+</ul>
+<footer>References: <a href="https://github.com/mcpjungle/MCPJungle" target="_blank" rel="noopener noreferrer">MCPJungle</a>, <a href="https://github.com/UsefulSoftwareCo/executor" target="_blank" rel="noopener noreferrer">Executor</a>, <a href="https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization" target="_blank" rel="noopener noreferrer">MCP authorization</a>. Implementation is in the local working tree; no pull request or deployment was created.</footer>
+</main>
+</body>
+</html>
