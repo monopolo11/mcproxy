@@ -1,6 +1,6 @@
-import { useQuery } from "@tanstack/react-query"
+import { useQueries, type UseQueryResult } from "@tanstack/react-query"
 import { ChevronRightIcon, WrenchIcon } from "lucide-react"
-import { useState } from "react"
+import { useState, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Input } from "@/components/ui/input"
@@ -11,14 +11,36 @@ import { matchesTool, toolParams } from "@/lib/tools"
 import { CopyButton } from "./copy-button"
 
 /**
- * Tool count, once known, and a "View" button that opens the upstream's tools in
+ * One profile whose tools the sheet lists. `prefix` renames them the way a
+ * toolkit exposes them; `label` turns the list into a group with a header.
+ */
+export type ToolSource = { profileId: string; prefix?: string; label?: ReactNode }
+
+type Group = { source: ToolSource; result: UseQueryResult<Tool[]>; visible?: Tool[] }
+
+/**
+ * Tool count, once known, and a "View" button that opens the sources' tools in
  * a side sheet. Tools load on first open unless a passing test already listed them.
  */
-export function ToolsSheet({ profileId }: { profileId: string }) {
+export function ToolsSheet({ sources }: { sources: readonly ToolSource[] }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
-  const tools = useQuery({ ...toolsQuery(profileId), enabled: open })
-  const count = tools.data?.length
+  const results = useQueries({
+    queries: sources.map(({ profileId, prefix = "" }) => ({
+      ...toolsQuery(profileId),
+      enabled: open,
+      select: (tools: Tool[]) => tools.map((tool) => ({ ...tool, name: prefix + tool.name })),
+    })),
+  })
+  const groups: Group[] = sources.flatMap((source, index) => {
+    const result = results[index]
+    return result ? [{ source, result, visible: result.data?.filter((tool) => matchesTool(tool, query)) }] : []
+  })
+  const count = groups.every((group) => group.result.data)
+    ? groups.reduce((sum, group) => sum + (group.result.data?.length ?? 0), 0)
+    : undefined
+  const anyTools = groups.some((group) => group.result.data?.length)
+  const noMatches = anyTools && groups.every((group) => group.visible?.length === 0)
 
   return (
     <Sheet
@@ -39,54 +61,73 @@ export function ToolsSheet({ profileId }: { profileId: string }) {
           <SheetTitle>Tools</SheetTitle>
           {count !== undefined ? <span className="text-muted-foreground">{count}</span> : null}
         </header>
-        {tools.data ? (
-          <ToolList tools={tools.data} query={query} onQueryChange={setQuery} />
-        ) : tools.isError ? (
-          <div className="grid justify-items-start gap-2 px-4 py-3">
-            <p role="alert" className="text-destructive">{errorMessage(tools.error)}</p>
-            <Button variant="outline" size="sm" onClick={() => void tools.refetch()}>
-              Retry
-            </Button>
+        {anyTools ? (
+          <div className="border-b px-4 py-2">
+            <Input
+              id="tools-filter"
+              aria-label="Filter tools"
+              className="h-8"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Filter tools"
+              spellCheck={false}
+            />
           </div>
-        ) : (
-          <p className="px-4 py-3 text-muted-foreground">Connecting to upstream</p>
-        )}
+        ) : null}
+        <ul className="min-h-0 flex-1 divide-y overflow-y-auto">
+          {groups.map((group) => (
+            <ToolGroup key={group.source.profileId} group={group} filtering={query.trim() !== ""} />
+          ))}
+          {noMatches ? <li className="px-4 py-3 text-muted-foreground">No matching tools</li> : null}
+        </ul>
       </SheetContent>
     </Sheet>
   )
 }
 
-function ToolList({
-  tools,
-  query,
-  onQueryChange,
-}: {
-  tools: readonly Tool[]
-  query: string
-  onQueryChange: (query: string) => void
-}) {
-  if (tools.length === 0) return <p className="px-4 py-3 text-muted-foreground">This upstream has no tools</p>
-  const visible = tools.filter((tool) => matchesTool(tool, query))
+/**
+ * One source's tools. A labelled source gets a sticky header that collapses the
+ * group; filtering keeps every group open so matches are never hidden.
+ */
+function ToolGroup({ group: { source, result, visible }, filtering }: { group: Group; filtering: boolean }) {
+  const [expanded, setExpanded] = useState(true)
+  // Filtered out entirely: the sheet shows a single "No matching tools" instead.
+  if (result.data?.length && visible?.length === 0) return null
   return (
-    <>
-      <div className="border-b px-4 py-2">
-        <Input
-          id="tools-filter"
-          aria-label="Filter tools"
-          className="h-8"
-          value={query}
-          onChange={(event) => onQueryChange(event.target.value)}
-          placeholder="Filter tools"
-          spellCheck={false}
-        />
-      </div>
-      <ul className="min-h-0 flex-1 divide-y overflow-y-auto">
-        {visible.map((tool) => (
-          <ToolItem key={tool.name} tool={tool} />
-        ))}
-        {visible.length === 0 ? <li className="px-4 py-3 text-muted-foreground">No matching tools</li> : null}
-      </ul>
-    </>
+    <li>
+      <Collapsible open={!source.label || expanded || filtering} onOpenChange={setExpanded} className="group/source">
+        {source.label ? (
+          <CollapsibleTrigger
+            disabled={filtering}
+            className="sticky top-0 z-10 flex h-8 w-full items-center gap-2 bg-background group-data-[state=open]/source:border-b px-4 text-left text-xs hover:bg-accent/40"
+          >
+            <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground group-data-[state=open]/source:rotate-90" />
+            {source.label}
+            {result.data ? <span className="ml-auto text-muted-foreground">{result.data.length}</span> : null}
+          </CollapsibleTrigger>
+        ) : null}
+        <CollapsibleContent>
+          {visible?.length ? (
+            <ul className="divide-y">
+              {visible.map((tool) => (
+                <ToolItem key={tool.name} tool={tool} />
+              ))}
+            </ul>
+          ) : result.data ? (
+            <p className="px-4 py-3 text-muted-foreground">This upstream has no tools</p>
+          ) : result.isError ? (
+            <div className="grid justify-items-start gap-2 px-4 py-3">
+              <p role="alert" className="text-destructive">{errorMessage(result.error)}</p>
+              <Button variant="outline" size="sm" onClick={() => void result.refetch()}>
+                Retry
+              </Button>
+            </div>
+          ) : (
+            <p className="px-4 py-3 text-muted-foreground">Connecting to upstream</p>
+          )}
+        </CollapsibleContent>
+      </Collapsible>
+    </li>
   )
 }
 

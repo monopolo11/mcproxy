@@ -53,10 +53,6 @@ export type ToolkitMember = { profileId: string; providerId: string; prefix: str
 export type ToolkitInput = { name: string; slug: string; profileIds: string[] }
 export type ToolkitPatch = { name?: string; profileIds?: string[] }
 
-export type ToolkitTestResult = {
-  members: { profileId: string; ok: boolean; message: string; tools: string[] }[]
-}
-
 /** Profiles and toolkits both issue a downstream token through the same routes. */
 export type TokenOwner = { kind: "profile" | "toolkit"; id: string }
 
@@ -191,9 +187,6 @@ export const api = {
     request<{ toolkit: Toolkit }>("PATCH", `/api/toolkits/${id(toolkitId)}`, patch),
   deleteToolkit: (toolkitId: string) =>
     request<undefined>("DELETE", `/api/toolkits/${id(toolkitId)}`),
-  /** Connects to every member; slow, so callers run it on demand. */
-  testToolkit: (toolkitId: string) =>
-    request<ToolkitTestResult>("POST", `/api/toolkits/${id(toolkitId)}/test`),
 }
 
 /** Human readable message for any thrown value. */
