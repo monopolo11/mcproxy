@@ -353,6 +353,17 @@ export async function createProxyServer(options: ServerOptions = {}) {
               return;
             }
           }
+          if (parts.length === 4 && parts[3] === "tools" && method === "GET") {
+            // Connects upstream with stored credentials, so it needs the CSRF marker.
+            if (req.headers["x-mcproxy-request"] !== "1")
+              throw new AppError(
+                "request_header",
+                "X-Mcproxy-Request: 1 is required",
+                403,
+              );
+            json(res, 200, { tools: await sessions.tools(p) });
+            return;
+          }
           if (parts.length === 4 && parts[3] === "test" && method === "POST") {
             json(res, 200, await sessions.test(p));
             return;

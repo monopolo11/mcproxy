@@ -37,6 +37,18 @@ export const toolkitsQuery = queryOptions({
   queryFn: async () => (await api.listToolkits()).toolkits,
 })
 
+/**
+ * The upstream's tools. Fetching opens an upstream connection, so results stay
+ * fresh until a test replaces them or the profile's credentials change.
+ */
+export const toolsQuery = (profileId: string) =>
+  queryOptions({
+    queryKey: ["profiles", profileId, "tools"],
+    queryFn: async () => (await api.listTools(profileId)).tools,
+    staleTime: Infinity,
+    retry: false,
+  })
+
 export function useCreateProvider() {
   const client = useQueryClient()
   return useMutation({
@@ -78,12 +90,16 @@ function useReplaceProfile() {
 }
 
 export function useUpdateProfile() {
+  const client = useQueryClient()
   const replace = useReplaceProfile()
   return useMutation({
     gcTime: 0,
     mutationFn: ({ id, patch }: { id: string; patch: ProfilePatch }) =>
       api.updateProfile(id, patch),
-    onSuccess: ({ profile }) => replace(profile),
+    onSuccess: ({ profile }) => {
+      client.removeQueries({ queryKey: toolsQuery(profile.id).queryKey })
+      replace(profile)
+    },
   })
 }
 
@@ -111,6 +127,10 @@ export function useTestProfile() {
   const client = useQueryClient()
   return useMutation({
     mutationFn: (profile: Profile) => api.testProfile(profile.id),
+    // A passing test already listed the tools; reuse them instead of reconnecting.
+    onSuccess: ({ ok, tools }, profile) => {
+      if (ok && tools) client.setQueryData(toolsQuery(profile.id).queryKey, tools)
+    },
     // A test can change status or lastError on the daemon side.
     onSettled: (_, __, profile) =>
       client.invalidateQueries({ queryKey: profilesQuery(profile.providerId).queryKey }),
