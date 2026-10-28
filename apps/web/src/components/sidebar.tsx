@@ -23,7 +23,7 @@ export function Sidebar() {
       className="flex max-h-72 shrink-0 flex-col border-b bg-sidebar md:h-full md:max-h-none md:w-60 md:border-r md:border-b-0"
     >
       <div className="flex h-11 shrink-0 items-center gap-2 border-b px-3.5">
-        <span aria-hidden className="size-3.5 rounded-[3px] bg-indicator" />
+        <img src="/favicon.svg" alt="" className="size-5 rounded-[5px]" />
         <Link to="/" className="font-semibold tracking-tight">
           mcproxy
         </Link>
