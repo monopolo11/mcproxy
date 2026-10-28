@@ -24,6 +24,7 @@ import { OAuth } from "./oauth.js";
 import { ProxySessions, ProxyService, type CloseReason } from "./proxy.js";
 import { ToolkitSessions } from "./toolkit.js";
 import { logger, reason } from "./log.js";
+import { Updater, updatePatch, type UpdateSource } from "./update.js";
 const log = logger("http");
 export interface ServerOptions {
   stateDir?: string;
@@ -31,6 +32,8 @@ export interface ServerOptions {
   platform?: Platform;
   webDir?: string;
   devOrigin?: string;
+  /** Enables `/api/update`; the daemon passes `gitSource`, tests a fake. */
+  updates?: UpdateSource;
 }
 export class Storage extends Context.Service<Storage, Store>()(
   "mcproxy/Storage",
@@ -94,6 +97,13 @@ export async function createProxyServer(options: ServerOptions = {}) {
       async () => new ToolkitSessions(store, proxy),
       (t) => t.dispose(),
     );
+    const source = options.updates;
+    const updater = source
+      ? await acquire(
+          async () => new Updater(source, store),
+          async (u) => u.dispose(),
+        )
+      : undefined;
     /** Profile sessions and any toolkit session that includes the profile. */
     const closeProfile = (id: string, why: CloseReason) =>
       Promise.all([proxy.closeProfile(id, why), toolkits.closeProfile(id, why)]);
@@ -271,10 +281,33 @@ export async function createProxyServer(options: ServerOptions = {}) {
         if (url.pathname === "/api/health" && method === "GET") {
           json(res, 200, {
             status: "ok",
-            version: "0.1.0",
+            version: updater?.status().version ?? "development",
             platform: process.platform,
           });
           return;
+        }
+        if (parts[1] === "update") {
+          if (!updater)
+            throw new AppError("not_found", "Updates are not enabled", 404);
+          if (url.pathname === "/api/update" && method === "GET") {
+            json(res, 200, updater.status());
+            return;
+          }
+          if (url.pathname === "/api/update" && method === "PATCH") {
+            updater.setChannel(updatePatch.parse(await body(req)).channel);
+            json(res, 200, updater.status());
+            return;
+          }
+          if (url.pathname === "/api/update/check" && method === "POST") {
+            await updater.check();
+            json(res, 200, updater.status());
+            return;
+          }
+          if (url.pathname === "/api/update/apply" && method === "POST") {
+            await updater.apply();
+            json(res, 202, updater.status());
+            return;
+          }
         }
         if (url.pathname === "/api/providers") {
           if (method === "GET") {
@@ -524,6 +557,7 @@ export async function createProxyServer(options: ServerOptions = {}) {
     if (!address || typeof address === "string")
       throw new Error("Missing listening address");
     base = `http://127.0.0.1:${address.port}`;
+    void updater?.check();
     return {
       url: base,
       port: address.port,

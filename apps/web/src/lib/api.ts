@@ -39,6 +39,26 @@ export type Profile = {
 
 export type Health = { status: "ok"; version: string; platform: string }
 
+export const UPDATE_CHANNELS = ["stable", "nightly"] as const
+export type UpdateChannel = (typeof UPDATE_CHANNELS)[number]
+
+/** The daemon's release, its channel and the last update check. */
+export type UpdateStatus = {
+  /** Absent for a development build. */
+  version?: string
+  commit?: string
+  /** Tracked files differ from the checked-out commit. */
+  modified: boolean
+  /** Development builds other than a clean main are never offered updates. */
+  updatable: boolean
+  channel: UpdateChannel
+  available?: { version: string; url: string }
+  checkedAt?: string
+  checkError?: string
+  applying: boolean
+  applyError?: string
+}
+
 /** Several profiles behind one endpoint; tools carry each member's prefix. */
 export type Toolkit = {
   id: string
@@ -149,6 +169,13 @@ const id = encodeURIComponent
 
 export const api = {
   health: () => request<Health>("GET", "/api/health"),
+
+  update: () => request<UpdateStatus>("GET", "/api/update"),
+  setUpdateChannel: (channel: UpdateChannel) =>
+    request<UpdateStatus>("PATCH", "/api/update", { channel }),
+  checkUpdate: () => request<UpdateStatus>("POST", "/api/update/check"),
+  /** Returns at once; the daemon builds, then restarts itself. */
+  applyUpdate: () => request<UpdateStatus>("POST", "/api/update/apply"),
 
   listProviders: () => request<{ providers: Provider[] }>("GET", "/api/providers"),
   createProvider: (input: ProviderInput) =>
