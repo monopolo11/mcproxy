@@ -48,7 +48,12 @@ for (const failure of [
       // Teardown can complete just after the HTTP error is flushed.
       for (let i = 0; i < 100 && daemon.sessionCount() !== 0; i++) await setTimeout(10);
       assert.equal(daemon.sessionCount(), 0);
-      const pid = await readFile(pidFile, "utf8").then(Number, () => undefined);
+      // The child may still be starting; wait for its pid so it can't write into the dir after cleanup.
+      let pid: number | undefined;
+      for (let i = 0; i < 100 && !pid; i++) {
+        pid = await readFile(pidFile, "utf8").then(Number, () => undefined);
+        if (!pid) await setTimeout(10);
+      }
       if (pid) {
         const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
         for (let i = 0; i < 100 && alive(); i++) await setTimeout(10);
