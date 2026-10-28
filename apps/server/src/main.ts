@@ -1,10 +1,17 @@
+import { fileURLToPath } from "node:url";
 import { trustExtraCertificates } from "./ca.js";
 import { createProxyServer } from "./server.js";
 import { portFromEnv } from "./platform.js";
 import { logger, reason } from "./log.js";
+import { gitSource, relaunch } from "./update.js";
 const log = logger("server");
 trustExtraCertificates();
-const server = await createProxyServer({ port: portFromEnv() });
+// The checkout this daemon runs from, as src/ under tsx or dist/ when built.
+const root = fileURLToPath(new URL("../../..", import.meta.url));
+const server = await createProxyServer({
+  port: portFromEnv(),
+  updates: gitSource(root, () => relaunch(() => server.close())),
+});
 log.info("listening", { url: server.url });
 let stopping = false;
 for (const signal of ["SIGINT", "SIGTERM"] as const)

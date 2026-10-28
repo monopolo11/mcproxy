@@ -48,7 +48,7 @@ type Profile = {
 };
 ```
 
-- `GET /api/health` returns `{ status: "ok", version: string, platform: string }`.
+- `GET /api/health` returns `{ status: "ok", version: string, platform: string }`. `version` is the release at HEAD, or `"development"`.
 - `GET /api/providers` returns `{ providers: Provider[] }`.
 - `POST /api/providers` takes `ProviderInput`, returns `{ provider: Provider }` with status 201.
 - `DELETE /api/providers/:id` deletes its profiles and closes sessions, returns 204.
@@ -79,6 +79,23 @@ type Toolkit = {
 - `POST /api/toolkits/:id/test` returns `{ members: { profileId, ok, message, tools: string[] }[] }` with prefixed names.
 
 Member tools are exposed as `<prefix><name>`: `provider_` when the provider has one profile in the toolkit, `provider_profile_` when it has several, hyphens replaced by underscores. Only tools are merged.
+
+Updates (added with release channels) move the daemon's own checkout between release tags:
+
+```ts
+type UpdateStatus = {
+  version?: string; commit?: string; modified: boolean; updatable: boolean;
+  channel: "stable" | "nightly";
+  available?: { version: string; url: string };
+  checkedAt?: string; checkError?: string;
+  applying: boolean; applyError?: string;
+};
+```
+
+- `GET /api/update` returns `UpdateStatus` from the last check.
+- `PATCH /api/update` takes `{ channel }` and returns `UpdateStatus`.
+- `POST /api/update/check` checks GitHub now and returns `UpdateStatus`.
+- `POST /api/update/apply` returns `UpdateStatus` with 202 and `applying: true`, then builds the release and restarts the daemon; 409 when nothing is available or an update is running.
 
 Validate slugs, uniqueness, body sizes, transport/auth compatibility, and forbidden hop-by-hop/custom routing headers. Protect credentials and refresh tokens at rest. Redact tokens from all logs and errors. Bind sessions to both provider and profile; authenticate every downstream HTTP request, including GET and DELETE. Prevent sharing upstream sessions or stdio processes across profiles or downstream clients unless correctness is proven. Dispose child processes and streams on termination.
 

@@ -75,6 +75,10 @@ export const toolkitMembers = sqliteTable(
   },
   (table) => [primaryKey({ columns: [table.toolkitId, table.profileId] })],
 );
+export const settings = sqliteTable("settings", {
+  key: text().primaryKey(),
+  value: text().notNull(),
+});
 export type Toolkit = typeof toolkits.$inferSelect;
 export type Provider = typeof providers.$inferSelect;
 export type Profile = typeof profiles.$inferSelect;
@@ -139,6 +143,17 @@ export class Store {
   }
   close() {
     this.sqlite.close();
+  }
+  setting(key: string) {
+    return this.db.select().from(settings).where(eq(settings.key, key)).get()
+      ?.value;
+  }
+  setSetting(key: string, value: string) {
+    this.db
+      .insert(settings)
+      .values({ key, value })
+      .onConflictDoUpdate({ target: settings.key, set: { value } })
+      .run();
   }
   allProviders() {
     return this.db.select().from(providers).all();

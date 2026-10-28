@@ -10,7 +10,7 @@
  * profiles spawn their commands with the daemon's PATH. The service runs
  * `dist/main.js` with the repo's `.env`, exactly as `pnpm start` does.
  */
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { connect } from "node:net";
@@ -69,6 +69,11 @@ interface Manager {
   start(): Promise<void>;
   stop(): Promise<void>;
   status(): Promise<Status>;
+  /**
+   * Restarts the installed daemon. The service manager stops the process that
+   * runs this, so `restartService` spawns it detached from the daemon.
+   */
+  relaunch: [string, ...string[]];
 }
 
 const exec = promisify(execFile);
@@ -203,6 +208,7 @@ function launchd(target: Target): Manager {
     },
     start,
     stop,
+    relaunch: ["launchctl", "kickstart", "-k", service],
     async status() {
       const printed = await attempt("launchctl", ["print", service]);
       return {
@@ -282,6 +288,7 @@ function systemd(target: Target): Manager {
     async stop() {
       if (existsSync(definition)) await systemctl("stop", systemdUnitName);
     },
+    relaunch: ["systemctl", "--user", "restart", systemdUnitName],
     async status() {
       const pid = Number(
         (await attempt("systemctl", [
@@ -364,6 +371,7 @@ function windows(target: Target): Manager {
   const stop = async () => {
     if (existsSync(definition)) await powershell("stop");
   };
+  const script = `'${definition.replace(/'/g, "''")}'`;
   return {
     definition: `${windowsRunKey}\\${windowsRunValue} (${definition})`,
     logs: `${logs} and ${logs.replace(/\.log$/, ".err.log")}`,
@@ -395,6 +403,17 @@ function windows(target: Target): Manager {
       await powershell("start");
     },
     stop,
+    relaunch: [
+      "powershell.exe",
+      "-NoProfile",
+      "-NonInteractive",
+      "-WindowStyle",
+      "Hidden",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      `& ${script} stop; & ${script} start`,
+    ],
     async status() {
       const registered =
         (await attempt("reg.exe", ["query", windowsRunKey, "/v", windowsRunValue])) !==
@@ -438,6 +457,23 @@ export function assertPortFree(port: number) {
     });
     socket.once("error", () => resolve());
   });
+}
+
+/**
+ * Restarts this daemon through its login service, when the service is what
+ * runs it. Returns false for a foreground daemon, which restarts itself.
+ */
+export async function restartService(target = resolveTarget()) {
+  let manager: Manager;
+  try {
+    manager = createManager(target);
+  } catch {
+    return false;
+  }
+  if ((await manager.status()).pid !== process.pid) return false;
+  const [file, ...args] = manager.relaunch;
+  spawn(file, args, { detached: true, stdio: "ignore", windowsHide: true }).unref();
+  return true;
 }
 
 /**

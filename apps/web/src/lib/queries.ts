@@ -9,6 +9,8 @@ import {
   type Toolkit,
   type ToolkitInput,
   type ToolkitPatch,
+  type UpdateChannel,
+  type UpdateStatus,
 } from "./api"
 
 // Query data excludes secrets. Sensitive mutations are discarded when their
@@ -20,6 +22,27 @@ export const healthQuery = queryOptions({
   refetchInterval: 15_000,
   retry: false,
 })
+
+/** Polls quickly while an update runs, so the page notices the restart. */
+export const updateQuery = queryOptions({
+  queryKey: ["update"],
+  queryFn: api.update,
+  refetchInterval: (query) => (query.state.data?.applying ? 2_000 : 60_000),
+  retry: false,
+})
+
+/** Channel changes, checks and applying all answer with the new status. */
+export function useUpdateAction<T>(action: (input: T) => Promise<UpdateStatus>) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: action,
+    onSuccess: (status) => client.setQueryData(updateQuery.queryKey, status),
+  })
+}
+
+export const useSetUpdateChannel = () => useUpdateAction<UpdateChannel>(api.setUpdateChannel)
+export const useCheckUpdate = () => useUpdateAction<void>(api.checkUpdate)
+export const useApplyUpdate = () => useUpdateAction<void>(api.applyUpdate)
 
 export const providersQuery = queryOptions({
   queryKey: ["providers"],
