@@ -27,7 +27,7 @@ pnpm build
 pnpm service install
 ```
 
-`pnpm service` takes `install`, `uninstall`, `start`, `stop`, `restart` and `status`. It registers a launchd agent on macOS, a systemd user unit on Linux and a `HKCU\...\Run` entry on Windows; none needs elevation. Install records the current `node`, `PATH` and `PORT` (from the shell or `.env`), so stdio profiles find the same commands as the shell that installed it, and updates find `git`, `gh` and `pnpm`. Install, start and restart refuse while something else listens on the port, such as a foreground `pnpm dev`. Run `pnpm service restart` after `pnpm build`; it keeps the installed definition, so re-run `install` to change `PORT`. On macOS and Linux the daemon comes back after a crash; on every platform `pnpm service stop` keeps it down until the next login. Logs go to `~/Library/Logs/mcproxy/mcproxy.log` on macOS, the user journal on Linux (`journalctl --user -u mcproxy`) and `%LOCALAPPDATA%\mcproxy\mcproxy.log` plus `mcproxy.err.log` on Windows, where they are replaced at each start. Linux install also enables lingering so the daemon starts at boot and survives logout, and prints the `loginctl` command when that needs a password. On Windows a PowerShell window may flash at logon, stop is a forced kill and nothing restarts the daemon after a crash. macOS is verified; Linux and Windows are implemented but not tested here.
+`pnpm service` takes `install`, `uninstall`, `start`, `stop`, `restart` and `status`. It registers a launchd agent on macOS, a systemd user unit on Linux and a `HKCU\...\Run` entry on Windows; none needs elevation. Install records the current `node`, `PATH` and `PORT` (from the shell or `.env`), so stdio profiles find the same commands as the shell that installed it, and updates find `git` and `pnpm`. Install, start and restart refuse while something else listens on the port, such as a foreground `pnpm dev`. Run `pnpm service restart` after `pnpm build`; it keeps the installed definition, so re-run `install` to change `PORT`. On macOS and Linux the daemon comes back after a crash; on every platform `pnpm service stop` keeps it down until the next login. Logs go to `~/Library/Logs/mcproxy/mcproxy.log` on macOS, the user journal on Linux (`journalctl --user -u mcproxy`) and `%LOCALAPPDATA%\mcproxy\mcproxy.log` plus `mcproxy.err.log` on Windows, where they are replaced at each start. Linux install also enables lingering so the daemon starts at boot and survives logout, and prints the `loginctl` command when that needs a password. On Windows a PowerShell window may flash at logon, stop is a forced kill and nothing restarts the daemon after a crash. macOS is verified; Linux and Windows are implemented but not tested here.
 
 Behind a TLS-inspecting proxy (Cloudflare WARP, Zscaler, ...) connecting to an HTTPS upstream fails with `SELF_SIGNED_CERT_IN_CHAIN` and the test reports an untrusted certificate. Put the proxy's CA bundle in a `.env` at the repo root, which `pnpm dev` and `pnpm start` load, then restart:
 
@@ -50,7 +50,7 @@ Releases are GitHub Releases on tags; the version lives only in the tag, never i
 
 The daemon's version is the release tag at the checkout's HEAD. A checkout with modified tracked files, or with no release tag at HEAD, is a development build: Settings shows its commit and offers no updates. The exception is a clean checkout of `main`, which is offered the latest stable once that release contains it.
 
-Settings > Daemon shows the version, the channel and any available update. Stable sees stable releases only; nightly sees both and offers the higher. A lower version is never offered, so moving from nightly to stable waits for the next stable newer than the installed nightly. The daemon checks at start and hourly, and the channel is kept in its state. The repo is private, so checks call `gh api` when `gh` is signed in, else use `GH_TOKEN` or `GITHUB_TOKEN` from the environment or `.env`; with neither, Settings says it can't check and why.
+Settings > Daemon shows the version, the channel and any available update. Stable sees stable releases only; nightly sees both and offers the higher. A lower version is never offered, so moving from nightly to stable waits for the next stable newer than the installed nightly. The daemon checks at start and hourly, and the channel is kept in its state. Checks call the GitHub API anonymously. Behind an address shared by many daemons, set `GITHUB_TOKEN` (or `GH_TOKEN`) in the environment or `.env` to raise the rate limit. When a check fails, Settings says why.
 
 Update and restart fetches tags with git's own credentials, checks out the release tag (detached), runs `pnpm install` if the lockfile changed and `pnpm build`, with their output in the daemon log. If any step fails it checks out the previous version, rebuilds it and shows the error. Then the daemon restarts: through the login service when that runs it, otherwise by respawning the same command line in the background, which leaves the terminal that started it; stop that one by pid. A build that succeeds but then fails to start is not rolled back. Migrations run at startup.
 
@@ -60,7 +60,7 @@ Recorded UI walkthroughs and disposable fixture instructions are in [docs/demos/
 
 ## API
 
-The management API follows [the implementation contract](docs/implementation-contract.md). POST, PATCH and DELETE require `X-Mcproxy-Request: 1`. Browser Origin must match the daemon or the exact local Vite origin. Host must match the daemon's listening address. There is no wildcard CORS.
+The management API follows [docs/api.md](docs/api.md). POST, PATCH and DELETE require `X-Mcproxy-Request: 1`. Browser Origin must match the daemon or the exact local Vite origin. Host must match the daemon's listening address. There is no wildcard CORS.
 
 Create a provider with `POST /api/providers`, then create profiles with `POST /api/providers/:id/profiles`. Profile creation returns the downstream `accessToken`, and `GET /api/profiles/:id/token` returns it again; like mutations, that read requires `X-Mcproxy-Request: 1`. Configure an MCP client with the returned `profile.endpoint` and `Authorization: Bearer <accessToken>`. Token rotation at `POST /api/profiles/:id/token` invalidates the previous token and closes existing sessions. Every MCP request, including GET and DELETE, requires authentication.
 
@@ -114,3 +114,7 @@ The daemon writes one timestamped line per event to stdout (warnings and errors 
 Scopes are `server`, `http` (rejected and failed requests), `proxy` and `toolkit` (sessions opened and closed with a `reason`, upstream connection failures), `oauth` (authorization, refresh) and `update` (failed checks, updates and restarts). Profiles show as `provider/profile`. Errors log a code or name such as `TypeError:ECONNREFUSED`, never their message. `src/log.ts` holds the format.
 
 Primary-source findings are in [docs/research/proxy-auth.md](docs/research/proxy-auth.md).
+
+## License
+
+[MIT](LICENSE)
