@@ -216,8 +216,8 @@ export function githubRepository(remote: string) {
 
 /**
  * The real source: the checkout at `root`, whose `origin` is the GitHub repo
- * that publishes releases. GitHub calls go through `gh api` when it works,
- * else `GH_TOKEN` or `GITHUB_TOKEN` (the repo is private).
+ * that publishes releases. GitHub calls are anonymous unless `GH_TOKEN` or
+ * `GITHUB_TOKEN` is set.
  */
 export function gitSource(root: string, restart: () => Promise<void>): UpdateSource {
   const git = async (...args: string[]) =>
@@ -244,28 +244,12 @@ export function gitSource(root: string, restart: () => Promise<void>): UpdateSou
   const github = async (path: string): Promise<unknown> => {
     repository ??= githubRepository(await git("remote", "get-url", "origin"));
     if (!repository) throw new UpdateError("origin is not a GitHub repository");
-    const endpoint = `repos/${repository}/${path}`;
-    let ghMissing = false;
-    try {
-      const { stdout } = await exec("gh", ["api", endpoint], {
-        timeout: 30_000,
-        maxBuffer: 16 * 1024 * 1024,
-        env: { ...process.env, GH_PROMPT_DISABLED: "1" },
-      });
-      return JSON.parse(stdout);
-    } catch (error) {
-      ghMissing = error instanceof Error && "code" in error && error.code === "ENOENT";
-    }
+    // Anonymous calls allow 60 requests an hour per IP; a token lifts that
+    // for networks where many daemons share one address.
     const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
-    if (!token)
-      throw new UpdateError(
-        ghMissing
-          ? "Can't check for updates: install gh and run `gh auth login`, or set GITHUB_TOKEN in .env"
-          : "Can't check for updates: gh could not read releases. Run `gh auth status`, or set GITHUB_TOKEN in .env",
-      );
-    const response = await fetch(`https://api.github.com/${endpoint}`, {
+    const response = await fetch(`https://api.github.com/repos/${repository}/${path}`, {
       headers: {
-        authorization: `Bearer ${token}`,
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
         accept: "application/vnd.github+json",
         "x-github-api-version": "2022-11-28",
         "user-agent": "mcproxy",
@@ -276,7 +260,9 @@ export function gitSource(root: string, restart: () => Promise<void>): UpdateSou
     });
     if (!response.ok)
       throw new UpdateError(
-        `Can't check for updates: GitHub answered HTTP ${response.status}. Check that the token can read ${repository}`,
+        response.status === 403 || response.status === 429
+          ? "Can't check for updates: GitHub rate limit reached. Set GITHUB_TOKEN in .env to raise it"
+          : `Can't check for updates: GitHub answered HTTP ${response.status} for ${repository}`,
       );
     return response.json();
   };

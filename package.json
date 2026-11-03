@@ -1,6 +1,7 @@
 {
   "name": "mcproxy",
   "private": true,
+  "license": "MIT",
   "packageManager": "pnpm@11.21.0",
   "scripts": {
     "dev": "pnpm -r --parallel dev",

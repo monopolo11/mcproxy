@@ -1,4 +1,4 @@
-// Typed client for the daemon management API (docs/implementation-contract.md).
+// Typed client for the daemon management API (docs/api.md).
 // Every request is same-origin and carries the CSRF marker header.
 
 export type Transport =
