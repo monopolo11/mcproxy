@@ -144,20 +144,23 @@ function ProviderNode({ provider, profiles }: { provider: Provider; profiles: Pr
       }
       className="grid gap-px"
     >
-      <div className="relative">
+      <div className="flex items-center">
+        {/* 24px target; the spacer keeps MCPs without profiles aligned. */}
         {profiles.length > 0 ? (
           <CollapsibleTrigger
             aria-label={`${open ? "Collapse" : "Expand"} ${provider.name} profiles`}
-            className="group absolute inset-y-0 left-0 z-10 flex w-3.5 items-center justify-center rounded-md text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            className="group flex h-7 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <ChevronRightIcon className="size-3 transition-transform duration-150 group-data-[state=open]:rotate-90" />
+            <ChevronRightIcon className="size-3.5 transition-transform duration-150 group-data-[state=open]:rotate-90" />
           </CollapsibleTrigger>
-        ) : null}
+        ) : (
+          <span aria-hidden className="w-6 shrink-0" />
+        )}
         <Link
           to="/providers/$providerId"
           params={{ providerId: provider.id }}
           activeOptions={{ exact: true }}
-          className={navItem(0)}
+          className={cn(navItem(0), "min-w-0 flex-1 pl-1")}
         >
           <StatusDot status={aggregateStatus(profiles)} />
           <span className="min-w-0 flex-1 truncate">{provider.name}</span>
@@ -170,7 +173,7 @@ function ProviderNode({ provider, profiles }: { provider: Provider; profiles: Pr
             key={profile.id}
             to="/providers/$providerId/profiles/$profileId"
             params={{ providerId: provider.id, profileId: profile.id }}
-            className={navItem(1)}
+            className={cn(navItem(1), "pl-9")}
           >
             <StatusDot status={profile.status} />
             <span className="min-w-0 flex-1 truncate">{profile.name}</span>
