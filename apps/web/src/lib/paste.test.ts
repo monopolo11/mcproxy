@@ -48,12 +48,14 @@ describe("parsePastedServer", () => {
   })
 
   it("reads mcproxy's own setup commands back", () => {
-    const target = { name: "linear-work", endpoint: "http://127.0.0.1:7433/mcps/linear/work", token: "tok" }
-    for (const command of clientCommands(target)) {
-      expect(parsePastedServer(command.text), command.id).toMatchObject({
-        name: "linear-work",
-        transport: { type: "http", url: target.endpoint },
-      })
+    for (const scope of ["user", "project"] as const) {
+      const target = { name: "linear-work", endpoint: "http://127.0.0.1:7433/mcps/linear/work", token: "tok", scope }
+      for (const command of clientCommands(target)) {
+        expect(parsePastedServer(command.text), `${command.id} ${scope}`).toMatchObject({
+          name: "linear-work",
+          transport: { type: "http", url: target.endpoint },
+        })
+      }
     }
   })
 

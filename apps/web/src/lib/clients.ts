@@ -14,11 +14,22 @@ export const CLIENT_LABELS: Record<ClientId, string> = {
   json: "JSON",
 }
 
+/** Where a client stores the registration: its global config, or the current project. */
+export const SCOPES = ["user", "project"] as const
+
+export type Scope = (typeof SCOPES)[number]
+
+export const SCOPE_LABELS: Record<Scope, string> = {
+  user: "User",
+  project: "Project",
+}
+
 export type ClientTarget = {
   /** Server name inside the client. */
   name: string
   endpoint: string
   token: string
+  scope: Scope
 }
 
 export type ClientCommand = { id: ClientId; label: string; text: string; hint?: string }
@@ -35,16 +46,22 @@ export function codexEnvVar(name: string): string {
 
 const bearer = (token: string) => `Bearer ${token}`
 
+/** Project config files live in the repo, and they hold the token as plain text. */
+const PROJECT_TOKEN_WARNING = "The token is stored in plain text, so keep the file out of git."
+
 export function clientCommand(id: ClientId, target: ClientTarget): ClientCommand {
-  const { name, endpoint, token } = target
+  const { name, endpoint, token, scope } = target
   const label = CLIENT_LABELS[id]
   switch (id) {
     case "claude":
       return {
         id,
         label,
-        text: `claude mcp add --transport http ${name} ${endpoint} --header "Authorization: ${bearer(token)}"`,
-        hint: "Adds to the user scope. Append --scope project to write .mcp.json instead.",
+        text: `claude mcp add --transport http --scope ${scope} ${name} ${endpoint} --header "Authorization: ${bearer(token)}"`,
+        hint:
+          scope === "project"
+            ? `Writes .mcp.json in the current directory. ${PROJECT_TOKEN_WARNING}`
+            : undefined,
       }
     case "codex": {
       const env = codexEnvVar(name)
@@ -52,14 +69,17 @@ export function clientCommand(id: ClientId, target: ClientTarget): ClientCommand
         id,
         label,
         text: `export ${env}="${token}"\ncodex mcp add ${name} --url ${endpoint} --bearer-token-env-var ${env}`,
-        hint: "Codex reads the token from the environment. Put the export in your shell profile.",
+        hint: `Codex reads the token from the environment. Put the export in your shell profile.${
+          scope === "project" ? " Codex only registers servers globally." : ""
+        }`,
       }
     }
     case "gemini":
       return {
         id,
         label,
-        text: `gemini mcp add --transport http --header "Authorization: ${bearer(token)}" ${name} ${endpoint}`,
+        text: `gemini mcp add --scope ${scope} --transport http --header "Authorization: ${bearer(token)}" ${name} ${endpoint}`,
+        hint: scope === "project" ? `Writes .gemini/settings.json in the current directory. ${PROJECT_TOKEN_WARNING}` : undefined,
       }
     case "cursor":
       return {
@@ -70,9 +90,21 @@ export function clientCommand(id: ClientId, target: ClientTarget): ClientCommand
           null,
           2,
         ),
-        hint: "Paste into ~/.cursor/mcp.json.",
+        hint: scope === "project" ? `Paste into .cursor/mcp.json in the project. ${PROJECT_TOKEN_WARNING}` : "Paste into ~/.cursor/mcp.json.",
       }
     case "vscode":
+      if (scope === "project") {
+        return {
+          id,
+          label,
+          text: JSON.stringify(
+            { servers: { [name]: { type: "http", url: endpoint, headers: { Authorization: bearer(token) } } } },
+            null,
+            2,
+          ),
+          hint: `Paste into .vscode/mcp.json in the project. ${PROJECT_TOKEN_WARNING}`,
+        }
+      }
       return {
         id,
         label,

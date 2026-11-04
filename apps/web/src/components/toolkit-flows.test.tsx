@@ -120,7 +120,7 @@ it("lists prefixed tools per member and copies client commands with the toolkit 
   await click("Copy Claude Code command")
   expect(api.revealToken).toHaveBeenCalledWith({ kind: "toolkit", id: toolkit.id })
   const copied = writeText.mock.calls[0]?.[0]
-  expect(copied).toContain("claude mcp add --transport http work http://127.0.0.1:7433/toolkits/work")
+  expect(copied).toContain("claude mcp add --transport http --scope user work http://127.0.0.1:7433/toolkits/work")
   expect(copied).toContain("Bearer synthetic-revealed-token")
   expect(container.textContent).not.toContain("synthetic-revealed-token")
 })

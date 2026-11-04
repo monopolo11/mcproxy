@@ -226,6 +226,30 @@ it("reuses the tools from a passing test instead of reconnecting", async () => {
   expect(api.listTools).not.toHaveBeenCalled()
 })
 
+it("switching the scope rewrites the displayed client command", async () => {
+  // Radix Select needs pointer capture APIs jsdom lacks.
+  Element.prototype.hasPointerCapture = () => false
+  Element.prototype.setPointerCapture = () => {}
+  Element.prototype.releasePointerCapture = () => {}
+  Element.prototype.scrollIntoView = () => {}
+  await renderProfilePage()
+  const trigger = document.querySelector<HTMLElement>('[aria-label="Scope"]')
+  expect(trigger?.textContent).toBe("User")
+  expect(container.textContent).toContain("--scope user")
+  await act(async () => {
+    trigger!.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }))
+  })
+  await flush()
+  const option = [...document.querySelectorAll('[role="option"]')].find((item) => item.textContent === "Project")
+  expect(option).toBeDefined()
+  await act(async () => {
+    ;(option as HTMLElement).click()
+  })
+  await flush()
+  expect(container.textContent).toContain("--scope project")
+  expect(container.textContent).not.toContain("--scope user")
+})
+
 it("copies client commands with the real token while it stays masked, and reveals on show", async () => {
   vi.spyOn(api, "revealToken").mockResolvedValue({ accessToken: "synthetic-revealed-token" })
   const writeText = vi.fn().mockResolvedValue(undefined)
@@ -235,7 +259,7 @@ it("copies client commands with the real token while it stays masked, and reveal
   await click("Copy Claude Code command")
   expect(writeText).toHaveBeenCalledTimes(1)
   const copied = writeText.mock.calls[0]?.[0]
-  expect(copied).toContain("claude mcp add --transport http fixture-work http://127.0.0.1:7433/mcps/fixture/work")
+  expect(copied).toContain("claude mcp add --transport http --scope user fixture-work http://127.0.0.1:7433/mcps/fixture/work")
   expect(copied).toContain("Bearer synthetic-revealed-token")
   expect(container.textContent).not.toContain("synthetic-revealed-token")
   await click("Show token")
