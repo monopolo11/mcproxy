@@ -38,6 +38,7 @@ type Profile = {
 - `GET /api/providers` returns `{ providers: Provider[] }`.
 - `POST /api/providers` takes `ProviderInput`, returns `{ provider: Provider }` with status 201.
 - `DELETE /api/providers/:id` deletes its profiles and closes sessions, returns 204.
+- `POST /api/providers/:id/discover-auth` probes an HTTP provider with an unauthenticated `initialize` and returns `{ authType: "none" | "bearer" | "oauth" | null }`. Success means `none`; a 401 or 403 means `oauth` when protected resource or authorization server metadata is found, otherwise `bearer`; anything else, or an unreachable upstream, is `null`. Stdio providers return 400.
 - `GET /api/providers/:id/profiles` returns `{ profiles: Profile[] }`.
 - `POST /api/providers/:id/profiles` takes `ProfileInput`, returns `{ profile: Profile, accessToken: string }` with status 201. Show the access token once, store only its hash.
 - `PATCH /api/profiles/:id` takes `{ name?: string, auth?: AuthInput }`, returns `{ profile: Profile }`. Profile URL remains stable.

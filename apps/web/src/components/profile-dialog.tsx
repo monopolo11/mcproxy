@@ -1,7 +1,8 @@
 import { useForm, useSelector } from "@tanstack/react-form"
+import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import { PlusIcon, XIcon } from "lucide-react"
-import { useMemo, useRef, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import {
@@ -25,7 +26,7 @@ import {
   toProfilePatch,
   type ProfileFormValues,
 } from "@/lib/forms"
-import { useCreateProfile, useUpdateProfile } from "@/lib/queries"
+import { authDiscoveryQuery, useCreateProfile, useUpdateProfile } from "@/lib/queries"
 import { describedBy, ErrorText, Field, visibleError } from "./field"
 
 type Mode = { kind: "create" } | { kind: "edit"; profile: Profile }
@@ -72,7 +73,11 @@ export function ProfileDialog({
   )
 }
 
-/** The profile form on its own; `initial` prefills create mode. */
+/**
+ * The profile form on its own; `initial` prefills create mode. A new HTTP
+ * profile without prefilled credentials preselects the auth type the daemon
+ * detects upstream, unless the user already picked one.
+ */
 export function ProfileForm({
   provider,
   mode,
@@ -125,6 +130,18 @@ export function ProfileForm({
 
   const replaceAuth = useSelector(form.store, (state) => state.values.replaceAuth)
   const authType = useSelector(form.store, (state) => state.values.authType)
+
+  const detect = mode.kind === "create" && transport === "http" && !initial?.authType
+  const discovery = useQuery({ ...authDiscoveryQuery(provider.id), enabled: detect })
+  const detected = detect ? discovery.data : undefined
+  useEffect(() => {
+    if (detected && !form.getFieldMeta("authType")?.isDirty) {
+      form.setFieldValue("authType", detected, { dontUpdateMeta: true })
+    }
+  }, [detected, form])
+  const authHint = detect && discovery.isPending
+    ? "Detecting"
+    : detected ? `Detected: ${AUTH_LABELS[detected]}` : undefined
 
   return (
     <form
@@ -215,7 +232,7 @@ export function ProfileForm({
               {(field) => {
                 const error = visibleError(field.state.meta)
                 return (
-                  <Field id="profile-auth-type" label="Type" error={error}>
+                  <Field id="profile-auth-type" label="Type" error={error} hint={authHint}>
                     <Select
                       value={field.state.value}
                       onValueChange={(value) => {
@@ -223,7 +240,7 @@ export function ProfileForm({
                         if (next) field.handleChange(next)
                       }}
                     >
-                      <SelectTrigger {...describedBy("profile-auth-type", error)} className="w-full">
+                      <SelectTrigger {...describedBy("profile-auth-type", error, authHint)} className="w-full">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>

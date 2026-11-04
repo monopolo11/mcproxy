@@ -38,6 +38,7 @@ beforeEach(() => {
   vi.spyOn(window, "open").mockReturnValue(null)
   vi.spyOn(api, "listProviders").mockResolvedValue({ providers: [provider] })
   vi.spyOn(api, "listProfiles").mockResolvedValue({ profiles: [profile] })
+  vi.spyOn(api, "discoverAuth").mockResolvedValue({ authType: null })
 })
 afterEach(async () => {
   await act(async () => root.unmount())
@@ -138,6 +139,35 @@ it("creates a profile without keeping credentials or the token in the mutation c
   expect(document.querySelector('[role="dialog"]')).toBeNull()
   expect(document.body.textContent).not.toContain("synthetic-downstream-token")
   expect(client.getMutationCache().getAll()).toHaveLength(0)
+})
+
+const renderCreateDialog = async () => {
+  await act(async () => root.render(<QueryClientProvider client={client}><ProfileDialog provider={provider} mode={{ kind: "create" }} trigger={<button>Add profile</button>} /></QueryClientProvider>))
+  await click("Add profile")
+}
+const selectedAuth = () => document.querySelector("select")?.value
+
+it("preselects the auth type detected upstream", async () => {
+  vi.mocked(api.discoverAuth).mockResolvedValue({ authType: "oauth" })
+  vi.spyOn(api, "createProfile").mockResolvedValue({ profile, accessToken: "synthetic-downstream-token" })
+  await renderCreateDialog()
+  expect(selectedAuth()).toBe("oauth")
+  expect(document.body.textContent).toContain("Detected: OAuth")
+  await fill("profile-name", "Work")
+  await click("Create profile")
+  expect(api.createProfile).toHaveBeenCalledWith(provider.id, { name: "Work", slug: "work", auth: { type: "oauth" } })
+})
+
+it("keeps an auth type the user picked before detection finished", async () => {
+  let resolve!: (value: { authType: "oauth" }) => void
+  vi.mocked(api.discoverAuth).mockReturnValue(new Promise((done) => { resolve = done }))
+  await renderCreateDialog()
+  expect(document.body.textContent).toContain("Detecting")
+  await chooseAuth("bearer")
+  await act(async () => resolve({ authType: "oauth" }))
+  await flush()
+  expect(selectedAuth()).toBe("bearer")
+  expect(document.body.textContent).toContain("Detected: OAuth")
 })
 
 it("validates on submit only, and clears an error once the field is edited", async () => {

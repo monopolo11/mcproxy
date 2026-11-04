@@ -66,7 +66,7 @@ Create a provider with `POST /api/providers`, then create profiles with `POST /a
 
 Put secrets in profile authentication fields. Provider URLs, command arguments and names are configuration returned by the management API.
 
-HTTP upstream profiles support no auth, bearer auth, validated custom headers and OAuth. Stdio profiles support no auth or an environment map. Stdio commands use an argument array without a shell and the SDK's limited default environment, with explicit PATH, HOME, and profile environment values. Child stderr is discarded to prevent credential leakage.
+HTTP upstream profiles support no auth, bearer auth, validated custom headers and OAuth. A new HTTP profile preselects the auth type the daemon detects by probing the upstream without credentials (`POST /api/providers/:id/discover-auth`); custom headers are never inferred. Stdio profiles support no auth or an environment map. Stdio commands use an argument array without a shell and the SDK's limited default environment, with explicit PATH, HOME, and profile environment values. Child stderr is discarded to prevent credential leakage.
 
 `POST /api/profiles/:id/oauth/start` returns an authorization URL for the UI to open. The daemon handles protected-resource and authorization-server discovery, dynamic registration or configured client credentials, PKCE, callback state validation and encrypted token persistence. Refresh is serialized per profile, runs before expired-token requests and retries once after a 401. The callback is `/oauth/callback`. Pending flows expire after ten minutes and callbacks cannot be replayed.
 
