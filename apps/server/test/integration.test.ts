@@ -478,7 +478,9 @@ test("OAuth discovery, registration, state, PKCE, durable tokens and refresh", a
       "/oauth/callback?state=" +
       authorize.searchParams.get("state") +
       "&code=fake";
-    assert.equal((await fetch(callback)).status, 200);
+    const connected = await fetch(callback);
+    assert.equal(connected.status, 200);
+    assert.match(await connected.text(), /OAuth \/ A is ready/);
     assert.ok(fixture.verifier.length >= 43);
     assert.equal((await fetch(callback)).status, 400);
     const list = await env.api(`/api/providers/${p.provider.id}/profiles`);
