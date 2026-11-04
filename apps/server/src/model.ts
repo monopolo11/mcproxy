@@ -108,7 +108,6 @@ export function toolPrefixes(
   const perProvider = new Map<string, number>();
   for (const { provider } of members)
     perProvider.set(provider.slug, (perProvider.get(provider.slug) ?? 0) + 1);
-  const identifier = (slug: string) => slug.replace(/-/g, "_");
   return new Map(
     members.map(({ profile, provider }) => [
       profile.id,
@@ -118,3 +117,16 @@ export function toolPrefixes(
     ]),
   );
 }
+/**
+ * Tool name prefix per profile on a provider's root endpoint: none when the
+ * provider has one profile, otherwise the profile slug.
+ */
+export function rootPrefixes(profiles: readonly { id: string; slug: string }[]) {
+  return new Map(
+    profiles.map((p) => [
+      p.id,
+      profiles.length > 1 ? `${identifier(p.slug)}_` : "",
+    ]),
+  );
+}
+const identifier = (slug: string) => slug.replace(/-/g, "_");

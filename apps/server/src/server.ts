@@ -96,7 +96,7 @@ export async function createProxyServer(options: ServerOptions = {}) {
       (p) => p.dispose(),
     );
     const toolkits = await acquire(
-      async () => new ToolkitSessions(store, proxy),
+      async () => new ToolkitSessions(proxy),
       (t) => t.dispose(),
     );
     const source = options.updates;
@@ -106,7 +106,7 @@ export async function createProxyServer(options: ServerOptions = {}) {
           async (u) => u.dispose(),
         )
       : undefined;
-    /** Profile sessions and any toolkit session that includes the profile. */
+    /** Profile sessions and any toolkit or root session that includes the profile. */
     const closeProfile = (id: string, why: CloseReason) =>
       Promise.all([proxy.closeProfile(id, why), toolkits.closeProfile(id, why)]);
     const runtime = Context.make(Storage, store).pipe(
@@ -201,6 +201,18 @@ export async function createProxyServer(options: ServerOptions = {}) {
         const provider = storage
           .allProviders()
           .find((p) => p.slug === parts[1]);
+        if (provider && parts.length === 2) {
+          const root = storage.root(provider.id);
+          if (!root) throw new AppError("not_found", "Endpoint not found", 404);
+          authorize(root.tokenHash, "root");
+          await toolkits.handle(
+            storage.rootGroup(provider),
+            req,
+            res,
+            method === "POST" ? await body(req) : undefined,
+          );
+          return;
+        }
         const profile =
           provider &&
           storage.allProfiles(provider.id).find((p) => p.slug === parts[2]);
@@ -221,7 +233,7 @@ export async function createProxyServer(options: ServerOptions = {}) {
           throw new AppError("not_found", "Endpoint not found", 404);
         authorize(toolkit.tokenHash, "toolkit");
         await toolkits.handle(
-          toolkit,
+          storage.toolkitGroup(toolkit),
           req,
           res,
           method === "POST" ? await body(req) : undefined,
@@ -310,13 +322,18 @@ export async function createProxyServer(options: ServerOptions = {}) {
         }
         if (url.pathname === "/api/providers") {
           if (method === "GET") {
-            json(res, 200, { providers: storage.allProviders() });
+            json(res, 200, {
+              providers: storage
+                .allProviders()
+                .map((p) => storage.providerView(p, base)),
+            });
             return;
           }
           if (method === "POST") {
             json(res, 201, {
-              provider: storage.createProvider(
-                providerInput.parse(await body(req)),
+              provider: storage.providerView(
+                storage.createProvider(providerInput.parse(await body(req))),
+                base,
               ),
             });
             return;
@@ -343,13 +360,43 @@ export async function createProxyServer(options: ServerOptions = {}) {
           if (parts.length === 3 && method === "DELETE") {
             const profileIds = storage.allProfiles(id).map((p) => p.id);
             storage.deleteProvider(id);
-            await Promise.all(
-              profileIds.map((profileId) =>
+            await Promise.all([
+              toolkits.closeGroup(id, "root-deleted"),
+              ...profileIds.map((profileId) =>
                 closeProfile(profileId, "profile-deleted"),
               ),
-            );
+            ]);
             json(res, 204);
             return;
+          }
+          if (parts[3] === "root") {
+            if (parts.length === 4 && method === "POST") {
+              const result = storage.createRoot(id);
+              json(res, 201, {
+                root: storage.providerView(provider, base).root,
+                accessToken: result.accessToken,
+              });
+              return;
+            }
+            if (parts.length === 4 && method === "DELETE") {
+              storage.deleteRoot(id);
+              await toolkits.closeGroup(id, "root-deleted");
+              json(res, 204);
+              return;
+            }
+            if (parts.length === 5 && parts[4] === "token") {
+              if (method === "GET") {
+                requireMarker();
+                json(res, 200, { accessToken: storage.revealRootToken(id) });
+                return;
+              }
+              if (method === "POST") {
+                const accessToken = storage.rotateRootToken(id);
+                await toolkits.closeGroup(id, "token-rotated");
+                json(res, 200, { accessToken });
+                return;
+              }
+            }
           }
           if (parts[3] === "profiles" && parts.length === 4) {
             if (method === "GET") {
@@ -365,6 +412,8 @@ export async function createProxyServer(options: ServerOptions = {}) {
                 id,
                 profileInput.parse(await body(req)),
               );
+              // A new profile changes the root's tools and prefixes.
+              await toolkits.closeGroup(id, "members-changed");
               json(res, 201, {
                 profile: storage.view(result.profile, base),
                 accessToken: result.accessToken,
@@ -470,7 +519,7 @@ export async function createProxyServer(options: ServerOptions = {}) {
           const t = storage.toolkit(id);
           if (parts.length === 3 && method === "DELETE") {
             storage.deleteToolkit(id);
-            await toolkits.closeToolkit(id, "toolkit-deleted");
+            await toolkits.closeGroup(id, "toolkit-deleted");
             json(res, 204);
             return;
           }
@@ -479,7 +528,7 @@ export async function createProxyServer(options: ServerOptions = {}) {
             const updated = storage.updateToolkit(id, patch);
             // New members mean new prefixes, so open sessions restart.
             if (patch.profileIds)
-              await toolkits.closeToolkit(id, "members-changed");
+              await toolkits.closeGroup(id, "members-changed");
             json(res, 200, { toolkit: storage.toolkitView(updated, base) });
             return;
           }
@@ -491,13 +540,13 @@ export async function createProxyServer(options: ServerOptions = {}) {
             }
             if (method === "POST") {
               const accessToken = storage.rotateToolkitToken(id);
-              await toolkits.closeToolkit(id, "token-rotated");
+              await toolkits.closeGroup(id, "token-rotated");
               json(res, 200, { accessToken });
               return;
             }
           }
           if (parts.length === 4 && parts[3] === "test" && method === "POST") {
-            json(res, 200, await toolkits.test(t));
+            json(res, 200, await toolkits.test(storage.toolkitGroup(t)));
             return;
           }
         }

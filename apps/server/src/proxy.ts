@@ -33,7 +33,8 @@ export type CloseReason =
   | "reconnected"
   | "profile-deleted"
   | "members-changed"
-  | "toolkit-deleted";
+  | "toolkit-deleted"
+  | "root-deleted";
 interface Session {
   profileId: string;
   /** `provider/profile`, for logs. */

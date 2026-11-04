@@ -15,27 +15,23 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { DownstreamTransport } from "./downstream.js";
-import { AppError, toolPrefixes } from "./model.js";
+import { AppError } from "./model.js";
 import { ProxySessions, listAllTools, upstreamFailureMessage, type CloseReason } from "./proxy.js";
-import type { Profile, Provider, Store, Toolkit } from "./store.js";
+import type { Group, GroupMember } from "./store.js";
 import { logger, reason } from "./log.js";
 
 const log = logger("toolkit");
 
-/** One member of a toolkit inside one downstream session. */
-interface Member {
-  profile: Profile;
-  provider: Provider;
-  prefix: string;
+/** One member of a group inside one downstream session. */
+interface Member extends GroupMember {
   /** Lazily opened upstream; dropped on failure so the next request retries. */
   connecting?: Promise<Client>;
   /** Prefixed name to upstream name, from the last successful tools/list. */
   tools: Map<string, string>;
 }
 interface Session {
-  toolkitId: string;
-  /** Toolkit slug, for logs. */
-  label: string;
+  groupId: string;
+  log: Group["log"];
   members: Member[];
   down: DownstreamTransport;
   server: Server;
@@ -43,18 +39,16 @@ interface Session {
 }
 
 /**
- * Serves a toolkit: one MCP endpoint whose tools are the union of its member
- * profiles' tools, each renamed with the member's prefix. Every downstream
- * session owns its own upstream connections, like profile sessions do.
+ * Serves a group (a toolkit or a provider's root): one MCP endpoint whose
+ * tools are the union of its member profiles' tools, each renamed with the
+ * member's prefix. Every downstream session owns its own upstream
+ * connections, like profile sessions do.
  */
 export class ToolkitSessions {
   readonly sessions = new Map<string, Session>();
   private stopping = false;
   private readonly timer: ReturnType<typeof setInterval>;
-  constructor(
-    private readonly store: Store,
-    private readonly proxy: ProxySessions,
-  ) {
+  constructor(private readonly proxy: ProxySessions) {
     this.timer = setInterval(() => {
       for (const [id, s] of this.sessions)
         if (Date.now() - s.touched > 30 * 60_000) void this.close(id, "idle");
@@ -65,15 +59,16 @@ export class ToolkitSessions {
     const s = this.sessions.get(id);
     if (!s) return;
     this.sessions.delete(id);
-    log.info("session closed", { session: id, toolkit: s.label, reason: why });
+    log.info("session closed", { session: id, ...s.log, reason: why });
     s.down.onclose = undefined;
     await Promise.allSettled([
       s.server.close(),
       ...s.members.map((m) => disconnect(m)),
     ]);
   }
-  async closeToolkit(toolkitId: string, why: CloseReason) {
-    await this.closeWhere((s) => s.toolkitId === toolkitId, why);
+  /** Closes every session of a toolkit or provider root. */
+  async closeGroup(groupId: string, why: CloseReason) {
+    await this.closeWhere((s) => s.groupId === groupId, why);
   }
   /** Credentials or membership of a profile changed: drop sessions using it. */
   async closeProfile(profileId: string, why: CloseReason) {
@@ -97,7 +92,7 @@ export class ToolkitSessions {
     );
   }
   async handle(
-    toolkit: Toolkit,
+    group: Group,
     req: IncomingMessage,
     res: ServerResponse,
     body: unknown,
@@ -108,7 +103,7 @@ export class ToolkitSessions {
     if (Array.isArray(header))
       throw new AppError("invalid_session", "Invalid session");
     let session = header ? this.sessions.get(header) : undefined;
-    if (header && (!session || session.toolkitId !== toolkit.id))
+    if (header && (!session || session.groupId !== group.id))
       throw new AppError("invalid_session", "Session not found", 404);
     let created: string | undefined;
     if (!session) {
@@ -121,7 +116,7 @@ export class ToolkitSessions {
       if (this.sessions.size + this.proxy.sessions.size >= 256)
         throw new AppError("session_limit", "Too many sessions", 503);
       const id = randomUUID();
-      session = this.create(id, toolkit);
+      session = this.create(id, group);
       this.sessions.set(id, session);
       created = id;
       try {
@@ -132,7 +127,7 @@ export class ToolkitSessions {
       }
       log.info("session opened", {
         session: id,
-        toolkit: toolkit.slug,
+        ...group.log,
         members: session.members.length,
       });
     }
@@ -153,17 +148,12 @@ export class ToolkitSessions {
     if (req.method === "DELETE" && header)
       await this.close(header, "client-closed");
   }
-  private create(id: string, toolkit: Toolkit): Session {
-    const rows = this.store.toolkitMembers(toolkit.id);
-    const prefixes = toolPrefixes(rows);
-    const members: Member[] = rows.map(({ profile, provider }) => ({
-      profile,
-      provider,
-      prefix: prefixes.get(profile.id)!,
-      tools: new Map(),
-    }));
+  private create(id: string, group: Group): Session {
+    const members: Member[] = group
+      .members()
+      .map((member) => ({ ...member, tools: new Map() }));
     const server = new Server(
-      { name: `mcproxy-toolkit-${toolkit.slug}`, version: "0.1.0" },
+      { name: group.name, version: "0.1.0" },
       { capabilities: { tools: { listChanged: true } } },
     );
     const down = new DownstreamTransport({ sessionIdGenerator: () => id });
@@ -171,8 +161,8 @@ export class ToolkitSessions {
       void this.close(id, "client-closed");
     };
     const session: Session = {
-      toolkitId: toolkit.id,
-      label: toolkit.slug,
+      groupId: group.id,
+      log: group.log,
       members,
       down,
       server,
@@ -188,7 +178,7 @@ export class ToolkitSessions {
       if (members.length && lists.every((r) => r.status === "rejected"))
         throw new McpError(
           ErrorCode.InternalError,
-          "No toolkit member is reachable",
+          "No member profile is reachable",
         );
       return { tools };
     });
@@ -248,7 +238,7 @@ export class ToolkitSessions {
         await client.connect(up, { timeout: 10_000 });
       } catch (error) {
         log.warn("member connect failed", {
-          toolkit: session.label,
+          ...session.log,
           profile: `${member.provider.slug}/${member.profile.slug}`,
           error: reason(error),
         });
@@ -271,12 +261,9 @@ export class ToolkitSessions {
     return member.connecting;
   }
   /** Connects to each member once and reports its prefixed tool names. */
-  async test(toolkit: Toolkit) {
-    const rows = this.store.toolkitMembers(toolkit.id);
-    const prefixes = toolPrefixes(rows);
+  async test(group: Group) {
     const members = await Promise.all(
-      rows.map(async ({ profile }) => {
-        const prefix = prefixes.get(profile.id)!;
+      group.members().map(async ({ profile, provider, prefix }) => {
         try {
           const tools = await this.proxy.inspect(profile, async (client) =>
             client.getServerCapabilities()?.tools
@@ -291,8 +278,8 @@ export class ToolkitSessions {
           };
         } catch (error) {
           log.warn("member test failed", {
-            toolkit: toolkit.slug,
-            profile: this.store.label(profile),
+            ...group.log,
+            profile: `${provider.slug}/${profile.slug}`,
             error: reason(error),
           });
           return {

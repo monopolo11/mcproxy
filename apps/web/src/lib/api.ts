@@ -8,7 +8,20 @@ export type Transport =
 export type TransportType = Transport["type"]
 
 export type ProviderInput = { name: string; slug: string; transport: Transport }
-export type Provider = ProviderInput & { id: string; createdAt: string }
+export type Provider = ProviderInput & {
+  id: string
+  createdAt: string
+  /** Present while the provider's root endpoint is enabled. */
+  root?: ProviderRoot
+}
+
+/** One endpoint serving every profile of a provider; tools carry a profile prefix when there are several. */
+export type ProviderRoot = {
+  endpoint: string
+  tokenIssuedAt: string
+  createdAt: string
+  members: { profileId: string; prefix: string }[]
+}
 
 export type AuthInput =
   | { type: "none" }
@@ -76,8 +89,8 @@ export type ToolkitMember = { profileId: string; providerId: string; prefix: str
 export type ToolkitInput = { name: string; slug: string; profileIds: string[] }
 export type ToolkitPatch = { name?: string; profileIds?: string[] }
 
-/** Profiles and toolkits both issue a downstream token through the same routes. */
-export type TokenOwner = { kind: "profile" | "toolkit"; id: string }
+/** Profiles, toolkits and provider roots (by provider id) each issue a downstream token. */
+export type TokenOwner = { kind: "profile" | "toolkit" | "root"; id: string }
 
 /** JSON Schema object as the upstream sent it; unvalidated, so read it defensively. */
 export type JsonSchema = { [key: string]: unknown }
@@ -170,6 +183,9 @@ export async function request<T>(
 
 const id = encodeURIComponent
 
+const tokenPath = ({ kind, id: ownerId }: TokenOwner) =>
+  kind === "root" ? `/api/providers/${id(ownerId)}/root/token` : `/api/${kind}s/${id(ownerId)}/token`
+
 export const api = {
   health: () => request<Health>("GET", "/api/health"),
 
@@ -188,6 +204,10 @@ export const api = {
   /** Probes an HTTP provider without credentials; null when it cannot tell. */
   discoverAuth: (providerId: string) =>
     request<{ authType: DiscoveredAuth | null }>("POST", `/api/providers/${id(providerId)}/discover-auth`),
+  enableRoot: (providerId: string) =>
+    request<{ root: ProviderRoot; accessToken: string }>("POST", `/api/providers/${id(providerId)}/root`),
+  disableRoot: (providerId: string) =>
+    request<undefined>("DELETE", `/api/providers/${id(providerId)}/root`),
 
   listProfiles: (providerId: string) =>
     request<{ profiles: Profile[] }>("GET", `/api/providers/${id(providerId)}/profiles`),
@@ -201,10 +221,8 @@ export const api = {
     request<{ profile: Profile }>("PATCH", `/api/profiles/${id(profileId)}`, patch),
   deleteProfile: (profileId: string) =>
     request<undefined>("DELETE", `/api/profiles/${id(profileId)}`),
-  rotateToken: (owner: TokenOwner) =>
-    request<{ accessToken: string }>("POST", `/api/${owner.kind}s/${id(owner.id)}/token`),
-  revealToken: (owner: TokenOwner) =>
-    request<{ accessToken: string }>("GET", `/api/${owner.kind}s/${id(owner.id)}/token`),
+  rotateToken: (owner: TokenOwner) => request<{ accessToken: string }>("POST", tokenPath(owner)),
+  revealToken: (owner: TokenOwner) => request<{ accessToken: string }>("GET", tokenPath(owner)),
   startOAuth: (profileId: string) =>
     request<{ authorizationUrl: string }>("POST", `/api/profiles/${id(profileId)}/oauth/start`),
   testProfile: (profileId: string) =>

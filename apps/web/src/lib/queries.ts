@@ -101,12 +101,33 @@ export function useDeleteProvider() {
   })
 }
 
+export function useEnableRoot() {
+  const client = useQueryClient()
+  return useMutation({
+    gcTime: 0,
+    mutationFn: (providerId: string) => api.enableRoot(providerId),
+    onSuccess: () => client.invalidateQueries({ queryKey: providersQuery.queryKey, exact: true }),
+  })
+}
+
+export function useDisableRoot() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (providerId: string) => api.disableRoot(providerId),
+    onSuccess: () => client.invalidateQueries({ queryKey: providersQuery.queryKey, exact: true }),
+  })
+}
+
 export function useCreateProfile(providerId: string) {
   const client = useQueryClient()
   return useMutation({
     gcTime: 0,
     mutationFn: (input: ProfileInput) => api.createProfile(providerId, input),
-    onSuccess: () => client.invalidateQueries({ queryKey: profilesQuery(providerId).queryKey }),
+    onSuccess: () => {
+      // The provider's root prefixes change with its profile count.
+      void client.invalidateQueries({ queryKey: providersQuery.queryKey, exact: true })
+      return client.invalidateQueries({ queryKey: profilesQuery(providerId).queryKey })
+    },
   })
 }
 
@@ -140,6 +161,7 @@ export function useDeleteProfile() {
     mutationFn: (profile: Profile) => api.deleteProfile(profile.id),
     onSuccess: (_, profile) => {
       void client.invalidateQueries({ queryKey: toolkitsQuery.queryKey })
+      void client.invalidateQueries({ queryKey: providersQuery.queryKey, exact: true })
       return client.invalidateQueries({ queryKey: profilesQuery(profile.providerId).queryKey })
     },
   })
