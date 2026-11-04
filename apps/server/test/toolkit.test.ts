@@ -211,3 +211,73 @@ test("toolkit members must exist and slugs are unique", async () => {
     await env.close();
   }
 });
+
+test("a provider root serves every profile, prefixed by profile only when there are several", async () => {
+  const env = await setup();
+  try {
+    const { data: linear } = await env.api("/api/providers", "POST", {
+      name: "Linear",
+      slug: "linear",
+      transport: env.stdio,
+    });
+    const providerId = linear.provider.id as string;
+    const beruna = await env.profile(providerId, "beruna", "B");
+    const endpoint = `${env.daemon.url}/mcps/linear`;
+    assert.equal((await fetch(endpoint)).status, 404);
+
+    const enabled = await env.api(`/api/providers/${providerId}/root`, "POST");
+    assert.equal(enabled.response.status, 201);
+    assert.equal(enabled.data.root.endpoint, endpoint);
+    assert.deepEqual(enabled.data.root.members, [{ profileId: beruna, prefix: "" }]);
+    assert.equal((await env.api(`/api/providers/${providerId}/root`, "POST")).response.status, 409);
+    const token = enabled.data.accessToken as string;
+
+    // Profile tokens do not open the root.
+    const { data: profileToken } = await env.api(`/api/profiles/${beruna}/token`);
+    assert.equal(
+      (await fetch(endpoint, { headers: { Authorization: `Bearer ${profileToken.accessToken}` } })).status,
+      401,
+    );
+
+    const single = await connect(endpoint, token);
+    assert.deepEqual(await names(single.client), ["identity"]);
+    assert.deepEqual(await text(single.client, "identity"), [{ type: "text", text: "B" }]);
+
+    // A second profile prefixes both and restarts root sessions.
+    const voxcloud = await env.profile(providerId, "voxcloud", "V");
+    assert.equal(env.daemon.sessionCount(), 0);
+    await assert.rejects(single.client.listTools());
+    const both = await connect(endpoint, token);
+    assert.deepEqual(await names(both.client), ["beruna_identity", "voxcloud_identity"]);
+    assert.deepEqual(await text(both.client, "voxcloud_identity"), [{ type: "text", text: "V" }]);
+    const listed = await env.api("/api/providers");
+    assert.deepEqual(listed.data.providers[0].root.members, [
+      { profileId: beruna, prefix: "beruna_" },
+      { profileId: voxcloud, prefix: "voxcloud_" },
+    ]);
+    assert.ok(!JSON.stringify(listed.data).includes("tokenHash"));
+
+    // The per-profile endpoints keep working alongside the root.
+    const direct = await connect(`${endpoint}/beruna`, profileToken.accessToken);
+    assert.deepEqual(await names(direct.client), ["identity"]);
+    await direct.close();
+
+    assert.equal((await env.api(`/api/providers/${providerId}/root/token`)).data.accessToken, token);
+    const rotated = await env.api(`/api/providers/${providerId}/root/token`, "POST");
+    assert.equal(env.daemon.sessionCount(), 0);
+    assert.equal((await fetch(endpoint, { headers: { Authorization: `Bearer ${token}` } })).status, 401);
+    const last = await connect(endpoint, rotated.data.accessToken);
+    assert.equal(env.daemon.sessionCount(), 1);
+
+    assert.equal((await env.api(`/api/providers/${providerId}/root`, "DELETE")).response.status, 204);
+    assert.equal(env.daemon.sessionCount(), 0);
+    await last.close();
+    assert.equal(
+      (await fetch(endpoint, { headers: { Authorization: `Bearer ${rotated.data.accessToken}` } })).status,
+      404,
+    );
+    assert.equal((await env.api("/api/providers")).data.providers[0].root, undefined);
+  } finally {
+    await env.close();
+  }
+});

@@ -1,15 +1,20 @@
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { ChevronRightIcon, PlusIcon, Trash2Icon } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { absoluteEndpoint, errorMessage, type Provider } from "@/lib/api"
+import { absoluteEndpoint, errorMessage, type Profile, type Provider, type ProviderRoot } from "@/lib/api"
 import { AUTH_LABELS } from "@/lib/forms"
-import { profilesQuery, providersQuery, useDeleteProvider } from "@/lib/queries"
+import { profilesQuery, providersQuery, useDeleteProvider, useDisableRoot, useEnableRoot } from "@/lib/queries"
+import { AccessTokenField, useAccessToken } from "./access-token"
+import { ClientCommands } from "./client-commands"
 import { ConfirmDialog } from "./confirm-dialog"
+import { CopyButton } from "./copy-button"
+import { ErrorText } from "./field"
 import { Notice } from "./notice"
 import { ListGroup, Page, PageBody, PageHeader, Row, Rows, Section } from "./page"
 import { ProfileDialog } from "./profile-dialog"
 import { ProfileStatus } from "./status"
+import { ToolsSheet } from "./tools-sheet"
 
 /** One MCP: its profiles and the upstream server configuration. */
 export function ProviderPage({ providerId }: { providerId: string }) {
@@ -125,6 +130,12 @@ function ProviderDetail({ provider }: { provider: Provider }) {
           )}
         </Section>
 
+        {provider.root ? (
+          <RootEndpoint provider={provider} root={provider.root} profiles={profiles.data} />
+        ) : (
+          <EnableRoot provider={provider} />
+        )}
+
         <Section title="Server">
           <Rows>
             <Row label="Slug">
@@ -153,5 +164,92 @@ function ProviderDetail({ provider }: { provider: Provider }) {
         </Section>
       </PageBody>
     </Page>
+  )
+}
+
+function EnableRoot({ provider }: { provider: Provider }) {
+  const enable = useEnableRoot()
+  return (
+    <Section title="Root endpoint">
+      <div className="flex items-center gap-3 rounded-lg border px-3.5 py-3">
+        <p className="min-w-0 flex-1 text-muted-foreground">One endpoint for every profile, tools prefixed by profile.</p>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={enable.isPending}
+          onClick={() => enable.mutate(provider.id, { onSuccess: () => enable.reset() })}
+        >
+          {enable.isPending ? "Enabling" : "Enable"}
+        </Button>
+      </div>
+      {enable.isError ? <ErrorText>{errorMessage(enable.error)}</ErrorText> : null}
+    </Section>
+  )
+}
+
+/** The provider's root: endpoint, token, merged tools and client commands. */
+function RootEndpoint({ provider, root, profiles }: { provider: Provider; root: ProviderRoot; profiles?: Profile[] }) {
+  const client = useQueryClient()
+  const disable = useDisableRoot()
+  const owner = { kind: "root", id: provider.id, name: `${provider.name} root` } as const
+  const token = useAccessToken(owner)
+  const endpoint = absoluteEndpoint(root.endpoint)
+  const grouped = root.members.length > 1
+
+  return (
+    <>
+      <Section title="Root endpoint">
+        <Rows>
+          <Row label="Endpoint">
+            <code className="min-w-0 truncate font-mono text-xs" title={endpoint}>
+              {endpoint}
+            </code>
+            <CopyButton value={endpoint} label="Copy root endpoint" />
+          </Row>
+          <Row label="Access token">
+            <AccessTokenField
+              owner={owner}
+              token={token}
+              onRotated={() => void client.invalidateQueries({ queryKey: providersQuery.queryKey, exact: true })}
+            />
+          </Row>
+          {root.members.length > 0 ? (
+            <Row label="Tools">
+              <ToolsSheet
+                sources={root.members.map(({ profileId, prefix }) => {
+                  const profile = profiles?.find((item) => item.id === profileId)
+                  return {
+                    profileId,
+                    prefix,
+                    label: grouped ? (
+                      <>
+                        {profile ? <ProfileStatus status={profile.status} /> : null}
+                        <span className="min-w-0 flex-1 truncate font-medium">{profile?.name ?? "Unknown"}</span>
+                      </>
+                    ) : undefined,
+                  }
+                })}
+              />
+            </Row>
+          ) : null}
+          <Row label="Token issued">
+            <time dateTime={root.tokenIssuedAt}>{new Date(root.tokenIssuedAt).toLocaleString()}</time>
+            <ConfirmDialog
+              trigger={
+                <Button variant="ghost" size="xs" className="ml-auto text-destructive hover:text-destructive">
+                  Disable
+                </Button>
+              }
+              title={`Disable the ${provider.name} root?`}
+              description="Its endpoint and access token stop working and open sessions close. Profile endpoints are kept."
+              confirmLabel="Disable root"
+              pendingLabel="Disabling"
+              onConfirm={() => disable.mutateAsync(provider.id)}
+            />
+          </Row>
+        </Rows>
+      </Section>
+      <ClientCommands name={provider.slug} endpoint={endpoint} token={token} />
+    </>
   )
 }

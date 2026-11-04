@@ -13,7 +13,11 @@ type ProviderInput = {
   transport: { type: "http"; url: string }
     | { type: "stdio"; command: string; args: string[]; cwd?: string };
 };
-type Provider = ProviderInput & { id: string; createdAt: string };
+type Provider = ProviderInput & { id: string; createdAt: string; root?: ProviderRoot };
+type ProviderRoot = {
+  endpoint: string; tokenIssuedAt: string; createdAt: string;
+  members: { profileId: string; prefix: string }[];
+};
 type AuthInput = { type: "none" }
   | { type: "bearer"; token: string }
   | { type: "headers"; headers: Record<string, string> }
@@ -39,6 +43,7 @@ type Profile = {
 - `POST /api/providers` takes `ProviderInput`, returns `{ provider: Provider }` with status 201.
 - `DELETE /api/providers/:id` deletes its profiles and closes sessions, returns 204.
 - `POST /api/providers/:id/discover-auth` probes an HTTP provider with an unauthenticated `initialize` and returns `{ authType: "none" | "bearer" | "oauth" | null }`. Success means `none`; a 401 or 403 means `oauth` when protected resource or authorization server metadata is found, otherwise `bearer`; anything else, or an unreachable upstream, is `null`. Stdio providers return 400.
+- `POST /api/providers/:id/root` enables the provider's root endpoint at `/mcps/:provider` and returns `{ root: ProviderRoot, accessToken: string }` with status 201; 409 when already enabled. `DELETE` disables it, closes its sessions and returns 204. `GET`/`POST /api/providers/:id/root/token` reveal or rotate its token like profile tokens. Root tools are the union of every profile's tools, unprefixed while the provider has one profile and `profile_` once it has several; creating or deleting a profile closes root sessions.
 - `GET /api/providers/:id/profiles` returns `{ profiles: Profile[] }`.
 - `POST /api/providers/:id/profiles` takes `ProfileInput`, returns `{ profile: Profile, accessToken: string }` with status 201. Show the access token once, store only its hash.
 - `PATCH /api/profiles/:id` takes `{ name?: string, auth?: AuthInput }`, returns `{ profile: Profile }`. Profile URL remains stable.

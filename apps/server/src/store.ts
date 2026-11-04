@@ -16,6 +16,7 @@ import {
   type AuthInput,
   type ProviderInput,
   compatible,
+  rootPrefixes,
   toolPrefixes,
 } from "./model.js";
 import { Vault } from "./platform.js";
@@ -75,6 +76,15 @@ export const toolkitMembers = sqliteTable(
   },
   (table) => [primaryKey({ columns: [table.toolkitId, table.profileId] })],
 );
+export const providerRoots = sqliteTable("provider_roots", {
+  providerId: text()
+    .primaryKey()
+    .references(() => providers.id, { onDelete: "cascade" }),
+  tokenHash: text().notNull(),
+  tokenSealed: text().notNull(),
+  tokenIssuedAt: text().notNull(),
+  createdAt: text().notNull(),
+});
 export const settings = sqliteTable("settings", {
   key: text().primaryKey(),
   value: text().notNull(),
@@ -82,6 +92,26 @@ export const settings = sqliteTable("settings", {
 export type Toolkit = typeof toolkits.$inferSelect;
 export type Provider = typeof providers.$inferSelect;
 export type Profile = typeof profiles.$inferSelect;
+export type ProviderRoot = typeof providerRoots.$inferSelect;
+/** A profile served by a merged endpoint, with the prefix its tools get there. */
+export interface GroupMember {
+  profile: Profile;
+  provider: Provider;
+  prefix: string;
+}
+/**
+ * An endpoint that merges its members' tools: a toolkit, or a provider's root.
+ * Members are read when a session opens.
+ */
+export interface Group {
+  /** Toolkit or provider id; sessions close by it. */
+  id: string;
+  /** Names the endpoint in logs, e.g. `{ toolkit: "work" }`. */
+  log: { toolkit: string } | { root: string };
+  /** Server name reported to clients. */
+  name: string;
+  members: () => GroupMember[];
+}
 export interface Secret {
   auth: AuthInput;
   client?: OAuthClientInformationMixed;
@@ -359,9 +389,20 @@ export class Store {
   revealToolkitToken(id: string) {
     return this.vault.open<string>(this.toolkit(id).tokenSealed);
   }
+  toolkitGroup(t: Toolkit): Group {
+    return {
+      id: t.id,
+      log: { toolkit: t.slug },
+      name: `mcproxy-toolkit-${t.slug}`,
+      members: () => {
+        const rows = this.toolkitMembers(t.id);
+        const prefixes = toolPrefixes(rows);
+        return rows.map((row) => ({ ...row, prefix: prefixes.get(row.profile.id)! }));
+      },
+    };
+  }
   toolkitView(t: Toolkit, base: string) {
-    const members = this.toolkitMembers(t.id);
-    const prefixes = toolPrefixes(members);
+    const members = this.toolkitGroup(t).members();
     return {
       id: t.id,
       name: t.name,
@@ -369,11 +410,95 @@ export class Store {
       tokenIssuedAt: t.tokenIssuedAt,
       createdAt: t.createdAt,
       endpoint: `${base}/toolkits/${t.slug}`,
-      members: members.map(({ profile, provider }) => ({
+      members: members.map(({ profile, provider, prefix }) => ({
         profileId: profile.id,
         providerId: provider.id,
-        prefix: prefixes.get(profile.id)!,
+        prefix,
       })),
+    };
+  }
+  /** The provider's root endpoint, when enabled. */
+  root(providerId: string) {
+    return this.db
+      .select()
+      .from(providerRoots)
+      .where(eq(providerRoots.providerId, providerId))
+      .get();
+  }
+  private requireRoot(providerId: string) {
+    const r = this.root(providerId);
+    if (!r) throw new AppError("not_found", "Root endpoint not enabled", 404);
+    return r;
+  }
+  createRoot(providerId: string) {
+    this.provider(providerId);
+    if (this.root(providerId))
+      throw new AppError("conflict", "Root endpoint already enabled", 409);
+    const accessToken = token();
+    const r: ProviderRoot = {
+      providerId,
+      ...this.issueToken(accessToken),
+      createdAt: new Date().toISOString(),
+    };
+    this.db.insert(providerRoots).values(r).run();
+    return { root: r, accessToken };
+  }
+  deleteRoot(providerId: string) {
+    this.requireRoot(providerId);
+    this.db
+      .delete(providerRoots)
+      .where(eq(providerRoots.providerId, providerId))
+      .run();
+  }
+  rotateRootToken(providerId: string) {
+    this.requireRoot(providerId);
+    const accessToken = token();
+    this.db
+      .update(providerRoots)
+      .set(this.issueToken(accessToken))
+      .where(eq(providerRoots.providerId, providerId))
+      .run();
+    return accessToken;
+  }
+  revealRootToken(providerId: string) {
+    return this.vault.open<string>(this.requireRoot(providerId).tokenSealed);
+  }
+  /** Every profile of the provider, in slug order, prefixed by `rootPrefixes`. */
+  rootGroup(provider: Provider): Group {
+    return {
+      id: provider.id,
+      log: { root: provider.slug },
+      name: `mcproxy-${provider.slug}`,
+      members: () => {
+        const rows = this.allProfiles(provider.id).sort((a, b) =>
+          a.slug.localeCompare(b.slug),
+        );
+        const prefixes = rootPrefixes(rows);
+        return rows.map((profile) => ({
+          profile,
+          provider,
+          prefix: prefixes.get(profile.id)!,
+        }));
+      },
+    };
+  }
+  /** Provider configuration plus its root endpoint, without token material. */
+  providerView(p: Provider, base: string) {
+    const r = this.root(p.id);
+    return {
+      ...p,
+      ...(r
+        ? {
+            root: {
+              endpoint: `${base}/mcps/${p.slug}`,
+              tokenIssuedAt: r.tokenIssuedAt,
+              createdAt: r.createdAt,
+              members: this.rootGroup(p)
+                .members()
+                .map(({ profile, prefix }) => ({ profileId: profile.id, prefix })),
+            },
+          }
+        : {}),
     };
   }
   /** `provider/profile` slugs, the profile's endpoint path; names it in logs. */

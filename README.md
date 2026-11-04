@@ -1,6 +1,6 @@
 # mcproxy
 
-Local MCP authentication proxy. Each provider/profile exposes an independent HTTP endpoint, with its own downstream bearer token and upstream credentials. MCP names, capabilities, tools, resources, prompts, errors and bidirectional messages pass through without aggregation. Toolkits are the one exception: a toolkit groups several profiles behind a single endpoint and token and exposes their tools under a per-profile prefix.
+Local MCP authentication proxy. Each provider/profile exposes an independent HTTP endpoint, with its own downstream bearer token and upstream credentials. MCP names, capabilities, tools, resources, prompts, errors and bidirectional messages pass through without aggregation. Toolkits and provider roots are the exceptions: each groups several profiles behind a single endpoint and token and exposes their tools under a per-profile prefix.
 
 Requires Node 22 and pnpm 11. The daemon binds only `127.0.0.1`, default port `7433`.
 
@@ -81,6 +81,12 @@ Connection testing initializes the upstream without calling tools. Non-OAuth pro
 A toolkit is a named set of profiles served at `/toolkits/:slug` behind its own bearer token. `POST /api/toolkits` takes `{ name, slug, profileIds }` and returns `{ toolkit, accessToken }`; `PATCH /api/toolkits/:id` changes the name or members, `DELETE` removes it, and `GET`/`POST /api/toolkits/:id/token` reveal or rotate the token with the same rules as profiles. `POST /api/toolkits/:id/test` connects to every member once and returns its prefixed tool names. Deleting a profile removes it from every toolkit.
 
 Tools are the union of the members' tools, renamed `<prefix><tool>`. The prefix is the provider slug when the provider contributes one profile to the toolkit, or `<provider>_<profile>` when it contributes several, with hyphens turned into underscores: `prepare_attachment_upload` from Linear becomes `linear_prepare_attachment_upload`, or `linear_acme_prepare_attachment_upload` once a second Linear profile joins. Tool definitions, call arguments, results and upstream error codes pass through unchanged apart from the name. Members connect lazily on the first `tools/list` or `tools/call`; an unreachable member contributes no tools, and `tools/list` fails only when no member is reachable. Upstream `tools/list_changed` notifications are forwarded. Resources, prompts and other upstream capabilities are not merged. Each downstream session opens its own upstream connections, as profile sessions do, and toolkit sessions close when the toolkit is deleted, its token rotates, its membership changes, or a member profile's credentials change.
+
+## Provider roots
+
+A provider's root serves all its profiles at `/mcps/:provider` behind its own bearer token, so one client entry reaches every account. It is off until `POST /api/providers/:id/root` returns `{ root, accessToken }`; `DELETE` turns it off, and `GET`/`POST /api/providers/:id/root/token` reveal or rotate the token. Profile tokens do not open the root, and profile endpoints keep working beside it.
+
+Tools behave as in a toolkit, with a shorter prefix: none while the provider has one profile, `<profile>_` once it has several. With `beruna` and `voxcloud` profiles on Linear, `http://127.0.0.1:7433/mcps/linear` lists `beruna_list_issues` and `voxcloud_list_issues`. Adding or removing a profile closes root sessions so clients relist with the new names.
 
 ## State and platform boundaries
 

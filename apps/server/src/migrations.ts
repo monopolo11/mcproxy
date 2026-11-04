@@ -64,4 +64,18 @@ export const migrations = [
     );
   `,
   },
+  {
+    // A provider's root endpoint serves all its profiles behind one token.
+    // A row exists only while the root is enabled.
+    version: 5,
+    sql: `
+    CREATE TABLE provider_roots (
+      providerId TEXT PRIMARY KEY REFERENCES providers(id) ON DELETE CASCADE,
+      tokenHash TEXT NOT NULL,
+      tokenSealed TEXT NOT NULL,
+      tokenIssuedAt TEXT NOT NULL,
+      createdAt TEXT NOT NULL
+    );
+  `,
+  },
 ] as const;
