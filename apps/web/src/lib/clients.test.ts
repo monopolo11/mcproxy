@@ -5,7 +5,8 @@ const target = {
   name: "linear-work",
   endpoint: "http://127.0.0.1:7433/mcps/linear/work",
   token: "k3Jd8sQ2pL0vXh7NtR1wYb9ZcE4mA6uG5fT8oV2iH3nK0Q",
-}
+  scope: "user",
+} as const
 
 describe("client commands", () => {
   it("every client gets the endpoint and the bearer token", () => {
@@ -28,5 +29,15 @@ describe("client commands", () => {
     expect(cursor.mcpServers["linear-work"].headers.Authorization).toBe(`Bearer ${target.token}`)
     const raw = JSON.parse(clientCommand("json", target).text)
     expect(raw["linear-work"]).toMatchObject({ type: "http", url: target.endpoint })
+  })
+
+  it("scope flows into the CLI flags and the project config shapes", () => {
+    const project = { ...target, scope: "project" } as const
+    expect(clientCommand("claude", target).text).toContain("--scope user")
+    expect(clientCommand("claude", project).text).toContain("--scope project")
+    expect(clientCommand("gemini", project).text).toContain("--scope project")
+    const vscode = JSON.parse(clientCommand("vscode", project).text)
+    expect(vscode.servers["linear-work"]).toMatchObject({ type: "http", url: target.endpoint })
+    expect(clientCommand("vscode", target).text).toMatch(/^code --add-mcp/)
   })
 })

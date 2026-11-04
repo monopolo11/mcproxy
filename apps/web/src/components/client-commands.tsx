@@ -1,6 +1,8 @@
+import { useState } from "react"
 import { Link } from "@tanstack/react-router"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { CLIENT_IDS, CLIENT_LABELS, clientCommand } from "@/lib/clients"
+import { CLIENT_IDS, CLIENT_LABELS, SCOPES, SCOPE_LABELS, clientCommand, type Scope } from "@/lib/clients"
 import { usePrefs } from "@/lib/prefs"
 import { TOKEN_MASK, type AccessToken } from "./access-token"
 import { ClientLogo } from "./client-logos"
@@ -9,7 +11,7 @@ import { Section } from "./page"
 
 /**
  * One tab per client with the command that registers an endpoint under
- * `name`. The displayed text follows the token's masked state; copy always
+ * `name`, in the chosen scope. The displayed text follows the token's masked state; copy always
  * uses the real token.
  */
 export function ClientCommands({
@@ -24,6 +26,7 @@ export function ClientCommands({
   const prefs = usePrefs()
   const visible = CLIENT_IDS.filter((id) => !prefs.hiddenClients.includes(id))
   const first = visible[0]
+  const [scope, setScope] = useState<Scope>("user")
 
   return (
     <Section title="Add to client">
@@ -36,16 +39,36 @@ export function ClientCommands({
         </p>
       ) : (
         <Tabs defaultValue={first}>
-          <TabsList aria-label="Client">
-            {visible.map((id) => (
-              <TabsTrigger key={id} value={id}>
-                <ClientLogo id={id} />
-                {CLIENT_LABELS[id]}
-              </TabsTrigger>
-            ))}
-          </TabsList>
+          <div className="flex items-center gap-2">
+            <TabsList aria-label="Client">
+              {visible.map((id) => (
+                <TabsTrigger key={id} value={id}>
+                  <ClientLogo id={id} />
+                  {CLIENT_LABELS[id]}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+            <Select
+              value={scope}
+              onValueChange={(value) => {
+                const next = SCOPES.find((s) => s === value)
+                if (next) setScope(next)
+              }}
+            >
+              <SelectTrigger aria-label="Scope" size="sm" className="ml-auto">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SCOPES.map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {SCOPE_LABELS[s]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           {visible.map((id) => {
-            const command = clientCommand(id, { name, endpoint, token: token.token ?? TOKEN_MASK })
+            const command = clientCommand(id, { name, endpoint, token: token.token ?? TOKEN_MASK, scope })
             return (
               <TabsContent key={id} value={id} className="grid gap-1.5">
                 <div className="relative rounded-lg border bg-field">
@@ -55,7 +78,7 @@ export function ClientCommands({
                   <div className="absolute top-1.5 right-1.5">
                     <CopyButton
                       label={`Copy ${command.label} command`}
-                      value={async () => clientCommand(id, { name, endpoint, token: await token.ensure() }).text}
+                      value={async () => clientCommand(id, { name, endpoint, token: await token.ensure(), scope }).text}
                     />
                   </div>
                 </div>
