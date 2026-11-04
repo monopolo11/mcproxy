@@ -21,6 +21,7 @@ import {
 import { Store, hash } from "./store.js";
 import { defaultPort, localPlatform, Vault, type Platform } from "./platform.js";
 import { OAuth } from "./oauth.js";
+import { discoverAuth } from "./discover.js";
 import { ProxySessions, ProxyService, type CloseReason } from "./proxy.js";
 import { ToolkitSessions } from "./toolkit.js";
 import { logger, reason } from "./log.js";
@@ -325,7 +326,22 @@ export async function createProxyServer(options: ServerOptions = {}) {
         }
         if (parts[1] === "providers" && parts[2]) {
           const id = parts[2];
-          storage.provider(id);
+          const provider = storage.provider(id);
+          if (
+            parts.length === 4 &&
+            parts[3] === "discover-auth" &&
+            method === "POST"
+          ) {
+            if (provider.transport.type !== "http")
+              throw new AppError(
+                "invalid_transport",
+                "Auth discovery requires an HTTP provider",
+              );
+            json(res, 200, {
+              authType: await discoverAuth(provider.transport.url),
+            });
+            return;
+          }
           if (parts.length === 3 && method === "DELETE") {
             const profileIds = storage.allProfiles(id).map((p) => p.id);
             storage.deleteProvider(id);

@@ -19,6 +19,9 @@ export type AuthInput =
 
 export type AuthType = AuthInput["type"]
 
+/** Auth types the daemon can infer by probing an HTTP upstream. */
+export type DiscoveredAuth = Extract<AuthType, "none" | "bearer" | "oauth">
+
 export type ProfileInput = { name: string; slug: string; auth: AuthInput }
 export type ProfilePatch = { name?: string; auth?: AuthInput }
 
@@ -182,6 +185,9 @@ export const api = {
     request<{ provider: Provider }>("POST", "/api/providers", input),
   deleteProvider: (providerId: string) =>
     request<undefined>("DELETE", `/api/providers/${id(providerId)}`),
+  /** Probes an HTTP provider without credentials; null when it cannot tell. */
+  discoverAuth: (providerId: string) =>
+    request<{ authType: DiscoveredAuth | null }>("POST", `/api/providers/${id(providerId)}/discover-auth`),
 
   listProfiles: (providerId: string) =>
     request<{ profiles: Profile[] }>("GET", `/api/providers/${id(providerId)}/profiles`),

@@ -55,6 +55,14 @@ export const profilesQuery = (providerId: string) =>
     queryFn: async () => (await api.listProfiles(providerId)).profiles,
   })
 
+/** The auth an HTTP provider asks for, probed once per dialog open. */
+export const authDiscoveryQuery = (providerId: string) =>
+  queryOptions({
+    queryKey: ["providers", providerId, "auth"],
+    queryFn: async () => (await api.discoverAuth(providerId)).authType,
+    retry: false,
+  })
+
 export const toolkitsQuery = queryOptions({
   queryKey: ["toolkits"],
   queryFn: async () => (await api.listToolkits()).toolkits,
