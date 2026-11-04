@@ -4,7 +4,7 @@ import { ChevronRightIcon, PlusIcon } from "lucide-react"
 import type { ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
-import { errorMessage, type Provider, type Toolkit } from "@/lib/api"
+import { errorMessage, type Profile, type Provider, type Toolkit } from "@/lib/api"
 import { type NavSectionId, updatePrefs, usePrefs } from "@/lib/prefs"
 import { healthQuery, profilesQuery, providersQuery, toolkitsQuery } from "@/lib/queries"
 import { cn } from "@/lib/utils"
@@ -115,32 +115,7 @@ function McpTree({ providers }: { providers: ReturnType<typeof useQuery<Provider
       {list.length === 0 ? <p className="px-3.5 py-1 text-muted-foreground">No MCPs yet</p> : null}
       {list.map((provider, index) => {
         const nested = profiles[index]?.data ?? []
-        return (
-          <div key={provider.id} className="grid gap-px">
-            <Link
-              to="/providers/$providerId"
-              params={{ providerId: provider.id }}
-              activeOptions={{ exact: true }}
-              className={navItem(0)}
-            >
-              <StatusDot status={aggregateStatus(nested)} />
-              <span className="min-w-0 flex-1 truncate">{provider.name}</span>
-              <span className="font-mono text-[11px] text-muted-foreground">{provider.transport.type}</span>
-            </Link>
-            {nested.map((profile) => (
-              <Link
-                key={profile.id}
-                to="/providers/$providerId/profiles/$profileId"
-                params={{ providerId: provider.id, profileId: profile.id }}
-                className={navItem(1)}
-              >
-                <StatusDot status={profile.status} />
-                <span className="min-w-0 flex-1 truncate">{profile.name}</span>
-                <span className="font-mono text-[11px] text-muted-foreground">{profile.authType}</span>
-              </Link>
-            ))}
-          </div>
-        )
+        return <ProviderNode key={provider.id} provider={provider} profiles={nested} />
       })}
       <ProviderDialog
         trigger={
@@ -150,6 +125,63 @@ function McpTree({ providers }: { providers: ReturnType<typeof useQuery<Provider
         }
       />
     </>
+  )
+}
+
+/** One MCP row with its profiles nested below. The chevron collapses the profile list. */
+function ProviderNode({ provider, profiles }: { provider: Provider; profiles: Profile[] }) {
+  const prefs = usePrefs()
+  const open = !prefs.collapsedProviders.includes(provider.id)
+  return (
+    <Collapsible
+      open={open}
+      onOpenChange={(next) =>
+        updatePrefs({
+          collapsedProviders: next
+            ? prefs.collapsedProviders.filter((id) => id !== provider.id)
+            : [...prefs.collapsedProviders, provider.id],
+        })
+      }
+      className="grid gap-px"
+    >
+      <div className="flex items-center">
+        {/* 24px target; the spacer keeps MCPs without profiles aligned. */}
+        {profiles.length > 0 ? (
+          <CollapsibleTrigger
+            aria-label={`${open ? "Collapse" : "Expand"} ${provider.name} profiles`}
+            className="group flex h-7 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <ChevronRightIcon className="size-3.5 transition-transform duration-150 group-data-[state=open]:rotate-90" />
+          </CollapsibleTrigger>
+        ) : (
+          <span aria-hidden className="w-6 shrink-0" />
+        )}
+        <Link
+          to="/providers/$providerId"
+          params={{ providerId: provider.id }}
+          activeOptions={{ exact: true }}
+          className={cn(navItem(0), "min-w-0 flex-1 pl-1")}
+        >
+          <StatusDot status={aggregateStatus(profiles)} />
+          <span className="min-w-0 flex-1 truncate">{provider.name}</span>
+          <span className="font-mono text-[11px] text-muted-foreground">{provider.transport.type}</span>
+        </Link>
+      </div>
+      <CollapsibleContent className="grid gap-px">
+        {profiles.map((profile) => (
+          <Link
+            key={profile.id}
+            to="/providers/$providerId/profiles/$profileId"
+            params={{ providerId: provider.id, profileId: profile.id }}
+            className={cn(navItem(1), "pl-9")}
+          >
+            <StatusDot status={profile.status} />
+            <span className="min-w-0 flex-1 truncate">{profile.name}</span>
+            <span className="font-mono text-[11px] text-muted-foreground">{profile.authType}</span>
+          </Link>
+        ))}
+      </CollapsibleContent>
+    </Collapsible>
   )
 }
 
