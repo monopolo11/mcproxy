@@ -22,6 +22,7 @@ import { Store, hash } from "./store.js";
 import { defaultPort, localPlatform, Vault, type Platform } from "./platform.js";
 import { OAuth } from "./oauth.js";
 import { discoverAuth } from "./discover.js";
+import { callbackCsp, callbackPage, type CallbackOutcome } from "./callback-page.js";
 import { ProxySessions, ProxyService, type CloseReason } from "./proxy.js";
 import { ToolkitSessions } from "./toolkit.js";
 import { logger, reason } from "./log.js";
@@ -235,6 +236,8 @@ export async function createProxyServer(options: ServerOptions = {}) {
             "oauth_state",
             "Missing authorization state or code",
           );
+        let status = 200;
+        let outcome: CallbackOutcome;
         try {
           const profileId = await oauth.callback(
             state,
@@ -242,30 +245,25 @@ export async function createProxyServer(options: ServerOptions = {}) {
             url.searchParams.get("error"),
           );
           await closeProfile(profileId, "reconnected");
+          const profile = storage.profile(profileId);
+          outcome = {
+            ok: true,
+            provider: storage.provider(profile.providerId).name,
+            profile: profile.name,
+          };
         } catch (error) {
           const failure = error instanceof AppError
             ? error
             : new AppError("oauth_failed", "Authorization failed. Connect again to retry");
-          res.writeHead(failure.status, {
-            "content-type": "text/html; charset=utf-8",
-            "cache-control": "no-store",
-          });
-          const message = failure.message.replace(
-            /[&<>"']/g,
-            (character) => `&#${character.charCodeAt(0)};`,
-          );
-          res.end(
-            `<!doctype html><title>Authorization failed</title><p>${message}</p><p>You can close this window.</p>`,
-          );
-          return;
+          status = failure.status;
+          outcome = { ok: false, message: failure.message };
         }
-        res.writeHead(200, {
-          "content-type": "text/html",
+        res.writeHead(status, {
+          "content-type": "text/html; charset=utf-8",
           "cache-control": "no-store",
+          "content-security-policy": callbackCsp,
         });
-        res.end(
-          "<!doctype html><title>Connected</title><p>Connected. You can close this window.</p>",
-        );
+        res.end(callbackPage(outcome));
         return;
       }
       if (parts[0] === "api") {
