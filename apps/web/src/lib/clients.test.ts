@@ -39,5 +39,9 @@ describe("client commands", () => {
     const vscode = JSON.parse(clientCommand("vscode", project).text)
     expect(vscode.servers["linear-work"]).toMatchObject({ type: "http", url: target.endpoint })
     expect(clientCommand("vscode", target).text).toMatch(/^code --add-mcp/)
+    for (const id of ["claude", "gemini", "cursor", "vscode"] as const) {
+      expect(clientCommand(id, project).hint, id).toContain("plain text")
+      expect(clientCommand(id, target).hint ?? "", id).not.toContain("plain text")
+    }
   })
 })

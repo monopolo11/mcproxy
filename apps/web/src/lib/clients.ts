@@ -46,6 +46,9 @@ export function codexEnvVar(name: string): string {
 
 const bearer = (token: string) => `Bearer ${token}`
 
+/** Project config files live in the repo, and they hold the token as plain text. */
+const PROJECT_TOKEN_WARNING = "The token is stored in plain text, so keep the file out of git."
+
 export function clientCommand(id: ClientId, target: ClientTarget): ClientCommand {
   const { name, endpoint, token, scope } = target
   const label = CLIENT_LABELS[id]
@@ -57,7 +60,7 @@ export function clientCommand(id: ClientId, target: ClientTarget): ClientCommand
         text: `claude mcp add --transport http --scope ${scope} ${name} ${endpoint} --header "Authorization: ${bearer(token)}"`,
         hint:
           scope === "project"
-            ? "Writes .mcp.json in the current directory. The token is stored in plain text, so keep the file out of git."
+            ? `Writes .mcp.json in the current directory. ${PROJECT_TOKEN_WARNING}`
             : undefined,
       }
     case "codex": {
@@ -76,6 +79,7 @@ export function clientCommand(id: ClientId, target: ClientTarget): ClientCommand
         id,
         label,
         text: `gemini mcp add --scope ${scope} --transport http --header "Authorization: ${bearer(token)}" ${name} ${endpoint}`,
+        hint: scope === "project" ? `Writes .gemini/settings.json in the current directory. ${PROJECT_TOKEN_WARNING}` : undefined,
       }
     case "cursor":
       return {
@@ -86,7 +90,7 @@ export function clientCommand(id: ClientId, target: ClientTarget): ClientCommand
           null,
           2,
         ),
-        hint: scope === "project" ? "Paste into .cursor/mcp.json in the project." : "Paste into ~/.cursor/mcp.json.",
+        hint: scope === "project" ? `Paste into .cursor/mcp.json in the project. ${PROJECT_TOKEN_WARNING}` : "Paste into ~/.cursor/mcp.json.",
       }
     case "vscode":
       if (scope === "project") {
@@ -98,7 +102,7 @@ export function clientCommand(id: ClientId, target: ClientTarget): ClientCommand
             null,
             2,
           ),
-          hint: "Paste into .vscode/mcp.json in the project. The token is stored in plain text, so keep the file out of git.",
+          hint: `Paste into .vscode/mcp.json in the project. ${PROJECT_TOKEN_WARNING}`,
         }
       }
       return {
