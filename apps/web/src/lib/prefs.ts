@@ -2,11 +2,12 @@ import { useSyncExternalStore } from "react"
 import { z } from "zod"
 import { CLIENT_IDS } from "./clients"
 
-// UI-only preferences kept in localStorage: which nav sections are collapsed
-// and which clients show on profile pages. Nothing here is a secret.
+// UI-only preferences kept in localStorage: which nav sections and MCP
+// profile lists are collapsed, and which clients show on profile pages. Nothing here is a secret.
 
 const schema = z.object({
   collapsed: z.array(z.enum(["mcps", "toolkits", "settings"])).default([]),
+  collapsedProviders: z.array(z.string()).default([]),
   hiddenClients: z.array(z.enum(CLIENT_IDS)).default([]),
 })
 
