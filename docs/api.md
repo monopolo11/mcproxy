@@ -2,7 +2,7 @@
 
 The daemon UI talks to this API. Server defaults to `127.0.0.1:7433`; the development UI runs on `127.0.0.1:5173` and proxies `/api`, `/oauth`, `/mcps` and `/toolkits` to the daemon.
 
-JSON request and response bodies. Errors are `{ error: { code: string, message: string } }`. All management fetches send `X-Mcproxy-Request: 1`. Server validates Host and browser Origin, allows the exact local development UI origin when needed, and rejects cross-origin control requests. No wildcard CORS. State-changing routes require the custom header. Do not return stored upstream secrets.
+JSON request and response bodies. Errors are `{ error: { code: string, message: string } }`. All management fetches send `X-Mcproxy-Request: 1`. Server validates Host and browser Origin, allows the exact local development UI origin when needed, accepts the configured tailnet origin only from the allowed Tailscale user (see the README's Tailnet access), and rejects cross-origin control requests. No wildcard CORS. State-changing routes require the custom header. Do not return stored upstream secrets.
 
 Types used below:
 

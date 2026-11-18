@@ -41,6 +41,23 @@ pnpm build
 pnpm test
 ```
 
+## Tailnet access
+
+To open the UI from other devices on a Tailscale tailnet, put `tailscale serve` in front of the daemon and name the one Tailscale user it accepts. The daemon still binds only `127.0.0.1`. In `.env`, then restart:
+
+```sh
+MCPROXY_TAILNET_ORIGIN=https://box.example.ts.net:7433
+MCPROXY_TAILNET_USER=me@example.com
+```
+
+```sh
+tailscale serve --bg --https=7433 http://127.0.0.1:7433
+```
+
+Both settings are required together. Requests with that Host must carry `Tailscale-User-Login` equal to `MCPROXY_TAILNET_USER`, which `tailscale serve` sets for the signed-in user of the calling device and overwrites when a client sends its own; requests from tagged devices and Funnel carry none and are refused. Browser requests through the tailnet must come from that origin. MCP endpoints answer there too, under the same check. Endpoints shown in the UI stay on `127.0.0.1`, for clients on the daemon's own machine or behind an SSH forward.
+
+OAuth callbacks still go to `http://127.0.0.1:<port>/oauth/callback`, so connect or reconnect OAuth profiles from a browser that reaches the daemon at that address, such as the daemon's machine or one with `ssh -L 7433:127.0.0.1:7433 <host>`.
+
 ## Releases and updates
 
 Releases are GitHub Releases on tags; the version lives only in the tag, never in `package.json`. `.github/workflows/release.yml` runs typecheck, tests and build, then publishes:

@@ -36,6 +36,35 @@ export function portFromEnv(value = process.env.PORT): number {
     throw new Error("PORT must be between 1 and 65535");
   return port;
 }
+/**
+ * A `tailscale serve` front for the daemon: requests arriving at `origin` are
+ * accepted only when serve vouches for `user` in `Tailscale-User-Login`.
+ */
+export interface Tailnet {
+  origin: string;
+  user: string;
+}
+/**
+ * The tailnet front from MCPROXY_TAILNET_ORIGIN and MCPROXY_TAILNET_USER, or
+ * undefined when neither is set. Throws when only one is set or the origin is
+ * not a bare https origin.
+ */
+export function tailnetFromEnv(
+  origin = process.env.MCPROXY_TAILNET_ORIGIN,
+  user = process.env.MCPROXY_TAILNET_USER,
+): Tailnet | undefined {
+  if (!origin && !user) return undefined;
+  if (!origin || !user)
+    throw new Error(
+      "MCPROXY_TAILNET_ORIGIN and MCPROXY_TAILNET_USER must be set together",
+    );
+  const url = URL.canParse(origin) ? new URL(origin) : undefined;
+  if (url?.protocol !== "https:" || url.origin !== origin.replace(/\/$/, ""))
+    throw new Error(
+      "MCPROXY_TAILNET_ORIGIN must be an https origin, e.g. https://box.example.ts.net",
+    );
+  return { origin: url.origin, user };
+}
 export const localPlatform: Platform = {
   stateDirectory: () =>
     process.platform === "darwin"

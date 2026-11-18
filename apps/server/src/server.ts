@@ -19,7 +19,13 @@ import {
   compatible,
 } from "./model.js";
 import { Store, hash } from "./store.js";
-import { defaultPort, localPlatform, Vault, type Platform } from "./platform.js";
+import {
+  defaultPort,
+  localPlatform,
+  Vault,
+  type Platform,
+  type Tailnet,
+} from "./platform.js";
 import { OAuth } from "./oauth.js";
 import { discoverAuth } from "./discover.js";
 import { callbackCsp, callbackPage, type CallbackOutcome } from "./callback-page.js";
@@ -34,6 +40,8 @@ export interface ServerOptions {
   platform?: Platform;
   webDir?: string;
   devOrigin?: string;
+  /** Also serves requests that `tailscale serve` forwards from this origin. */
+  tailnet?: Tailnet;
   /** Enables `/api/update`; the daemon passes `gitSource`, tests a fake. */
   updates?: UpdateSource;
 }
@@ -164,14 +172,19 @@ export async function createProxyServer(options: ServerOptions = {}) {
       res: ServerResponse,
     ) {
       const host = req.headers.host;
-      if (host !== new URL(base).host)
+      const tailnet = options.tailnet;
+      // tailscale serve keeps the tailnet Host and overwrites the login header
+      // with the signed-in user, so the header cannot be spoofed through it.
+      const viaTailnet = !!tailnet && host === new URL(tailnet.origin).host;
+      if (host !== new URL(base).host && !viaTailnet)
         throw new AppError("invalid_host", "Invalid Host", 403);
+      if (viaTailnet && req.headers["tailscale-user-login"] !== tailnet.user)
+        throw new AppError("tailnet_user", "Tailscale user not allowed", 403);
       const origin = req.headers.origin;
-      if (
-        origin &&
-        origin !== base &&
-        origin !== (options.devOrigin ?? "http://127.0.0.1:5173")
-      )
+      const allowedOrigins = viaTailnet
+        ? [tailnet.origin]
+        : [base, options.devOrigin ?? "http://127.0.0.1:5173"];
+      if (origin && !allowedOrigins.includes(origin))
         throw new AppError("invalid_origin", "Origin not allowed", 403);
       res.setHeader("Referrer-Policy", "no-referrer");
       res.setHeader(
