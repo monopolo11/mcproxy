@@ -43,7 +43,7 @@ pnpm test
 
 ## Tailnet access
 
-To open the UI from other devices on a Tailscale tailnet, put `tailscale serve` in front of the daemon and name the one Tailscale user it accepts. The daemon then opens a second listener, also bound only to `127.0.0.1`, on `MCPROXY_TAILNET_PORT` (default `7434`); point serve at that one, never at the daemon's own port. In `.env`, then restart:
+To open the UI from other devices on a Tailscale tailnet, put `tailscale serve` in front of the daemon and name the one Tailscale user it accepts. The daemon then opens a second listener, also bound only to `127.0.0.1`, on `MCPROXY_TAILNET_PORT` (default `7434`); point serve at that one, never at the daemon's own port. Set both in the repo root `.env`, which `pnpm dev`, `pnpm start` and the login service load (a bare `node apps/server/dist/main.js` does not), then restart:
 
 ```sh
 MCPROXY_TAILNET_ORIGIN=https://box.example.ts.net:7433
