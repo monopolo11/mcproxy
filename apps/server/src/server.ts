@@ -40,7 +40,7 @@ export interface ServerOptions {
   platform?: Platform;
   webDir?: string;
   devOrigin?: string;
-  /** Also serves requests that `tailscale serve` forwards from this origin. */
+  /** Opens a second loopback listener for `tailscale serve` to forward to. */
   tailnet?: Tailnet;
   /** Enables `/api/update`; the daemon passes `gitSource`, tests a fake. */
   updates?: UpdateSource;
@@ -121,13 +121,15 @@ export async function createProxyServer(options: ServerOptions = {}) {
       Context.add(ProxyService, proxy),
     );
     const run = Effect.runPromiseWith(runtime);
-    const server = createServer((req, res) => {
+    // One handler per listener: whether a request came through the tailnet
+    // front is decided by the socket it arrived on, never by its headers.
+    const listener = (front?: Tailnet) => (req: IncomingMessage, res: ServerResponse) => {
       void run(
         Effect.gen(function* () {
           const storage = yield* Storage;
           const sessions = yield* ProxyService;
           yield* Effect.tryPromise({
-            try: () => handle(storage, sessions, req, res),
+            try: () => handle(storage, sessions, req, res, front),
             catch: (error) => {
               const failure =
                 error instanceof AppError
@@ -164,25 +166,25 @@ export async function createProxyServer(options: ServerOptions = {}) {
           });
         else res.end();
       });
-    });
+    };
+    const server = createServer(listener());
     async function handle(
       storage: Store,
       sessions: ProxySessions,
       req: IncomingMessage,
       res: ServerResponse,
+      front: Tailnet | undefined,
     ) {
       const host = req.headers.host;
-      const tailnet = options.tailnet;
-      // tailscale serve keeps the tailnet Host and overwrites the login header
-      // with the signed-in user, so the header cannot be spoofed through it.
-      const viaTailnet = !!tailnet && host === new URL(tailnet.origin).host;
-      if (host !== new URL(base).host && !viaTailnet)
+      if (host !== new URL(front?.origin ?? base).host)
         throw new AppError("invalid_host", "Invalid Host", 403);
-      if (viaTailnet && req.headers["tailscale-user-login"] !== tailnet.user)
+      // tailscale serve overwrites this header with the calling device's
+      // signed-in user, so it cannot be spoofed through the tailnet listener.
+      if (front && req.headers["tailscale-user-login"] !== front.user)
         throw new AppError("tailnet_user", "Tailscale user not allowed", 403);
       const origin = req.headers.origin;
-      const allowedOrigins = viaTailnet
-        ? [tailnet.origin]
+      const allowedOrigins = front
+        ? [front.origin]
         : [base, options.devOrigin ?? "http://127.0.0.1:5173"];
       if (origin && !allowedOrigins.includes(origin))
         throw new AppError("invalid_origin", "Origin not allowed", 403);
@@ -609,34 +611,50 @@ export async function createProxyServer(options: ServerOptions = {}) {
       });
       res.end(method === "HEAD" ? undefined : data);
     }
-    server.requestTimeout = 30_000;
-    server.headersTimeout = 15_000;
-    await acquire(
-      () =>
-        new Promise<typeof server>((resolve, reject) => {
-          server.once("error", reject);
-          server.listen(options.port ?? defaultPort, "127.0.0.1", () => {
-            server.off("error", reject);
-            resolve(server);
-          });
-        }),
-      async (s) => {
-        await toolkits.dispose();
-        await proxy.dispose();
-        s.closeAllConnections();
-        await new Promise<void>((resolve, reject) =>
-          s.close((error) => (error ? reject(error) : resolve())),
-        );
-      },
-    );
-    const address = server.address();
-    if (!address || typeof address === "string")
-      throw new Error("Missing listening address");
-    base = `http://127.0.0.1:${address.port}`;
+    /** Binds a listener to loopback for the scope's lifetime; returns its port. */
+    const listen = async (
+      s: typeof server,
+      port: number,
+      beforeClose?: () => Promise<void>,
+    ) => {
+      s.requestTimeout = 30_000;
+      s.headersTimeout = 15_000;
+      await acquire(
+        () =>
+          new Promise<typeof s>((resolve, reject) => {
+            s.once("error", reject);
+            s.listen(port, "127.0.0.1", () => {
+              s.off("error", reject);
+              resolve(s);
+            });
+          }),
+        async (s) => {
+          await beforeClose?.();
+          s.closeAllConnections();
+          await new Promise<void>((resolve, reject) =>
+            s.close((error) => (error ? reject(error) : resolve())),
+          );
+        },
+      );
+      const address = s.address();
+      if (!address || typeof address === "string")
+        throw new Error("Missing listening address");
+      return address.port;
+    };
+    const port = await listen(server, options.port ?? defaultPort, async () => {
+      await toolkits.dispose();
+      await proxy.dispose();
+    });
+    base = `http://127.0.0.1:${port}`;
+    const tailnet = options.tailnet;
+    const tailnetPort = tailnet
+      ? await listen(createServer(listener(tailnet)), tailnet.port)
+      : undefined;
     void updater?.check();
     return {
       url: base,
-      port: address.port,
+      port,
+      tailnetPort,
       close: () => Effect.runPromise(Scope.close(scope, Exit.void)),
       sessionCount: () => proxy.sessions.size + toolkits.sessions.size,
     };

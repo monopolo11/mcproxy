@@ -573,16 +573,22 @@ test("management rejects foreign origins, hosts, missing headers, incompatible a
   }
 });
 
-test("tailnet front requires the allowed Tailscale user and its own origin", async () => {
+test("tailnet listener requires the allowed Tailscale user and its own host and origin", async () => {
   const dir = await mkdtemp(join(tmpdir(), "mcproxy-test-"));
-  const tailnet = { origin: "https://box.example.ts.net", user: "me@example.com" };
+  const tailnet = { origin: "https://box.example.ts.net", user: "me@example.com", port: 0 };
   const daemon = await createProxyServer({ stateDir: dir, port: 0, tailnet });
+  assert.ok(daemon.tailnetPort);
   // fetch cannot override Host, so this sends what tailscale serve forwards.
-  const send = (path: string, headers: Record<string, string>, method = "GET") =>
+  const send = (
+    port: number,
+    path: string,
+    headers: Record<string, string>,
+    method = "GET",
+  ) =>
     new Promise<number | undefined>((resolve, reject) => {
       const req = request(
-        daemon.url + path,
-        { method, headers: { Host: "box.example.ts.net", ...headers } },
+        `http://127.0.0.1:${port}${path}`,
+        { method, headers },
         (res) => {
           res.resume();
           resolve(res.statusCode);
@@ -591,31 +597,44 @@ test("tailnet front requires the allowed Tailscale user and its own origin", asy
       req.on("error", reject);
       req.end(method === "POST" ? "{}" : undefined);
     });
+  const viaServe = (path: string, headers: Record<string, string>, method?: string) =>
+    send(daemon.tailnetPort!, path, { Host: "box.example.ts.net", ...headers }, method);
+  const me = { "Tailscale-User-Login": "me@example.com" };
   try {
-    assert.equal(await send("/api/health", {}), 403);
+    assert.equal(await viaServe("/api/health", {}), 403);
     assert.equal(
-      await send("/api/health", { "Tailscale-User-Login": "other@example.com" }),
+      await viaServe("/api/health", { "Tailscale-User-Login": "other@example.com" }),
       403,
     );
-    const me = { "Tailscale-User-Login": "me@example.com" };
-    assert.equal(await send("/api/health", me), 200);
+    assert.equal(await viaServe("/api/health", me), 200);
+    // serve forwards a client-chosen Host, so a loopback Host must not skip the user check.
+    assert.equal(
+      await viaServe("/api/health", { Host: new URL(daemon.url).host }),
+      403,
+      "a loopback Host through the tailnet listener is refused",
+    );
     const mutation = { ...me, "X-Mcproxy-Request": "1", "Content-Type": "application/json" };
     assert.equal(
-      await send("/api/providers", { ...mutation, Origin: daemon.url }, "POST"),
+      await viaServe("/api/providers", { ...mutation, Origin: daemon.url }, "POST"),
       403,
-      "the loopback origin does not pass through the tailnet host",
+      "the loopback origin does not pass through the tailnet listener",
     );
     assert.equal(
-      await send("/api/providers", { ...mutation, Origin: tailnet.origin }, "POST"),
+      await viaServe("/api/providers", { ...mutation, Origin: tailnet.origin }, "POST"),
       400,
       "the tailnet origin reaches validation",
+    );
+    assert.equal(
+      await send(daemon.port, "/api/health", { Host: "box.example.ts.net", ...me }),
+      403,
+      "the loopback listener never accepts the tailnet host",
     );
     assert.equal((await fetch(daemon.url + "/api/health")).status, 200);
     assert.equal(
       (await fetch(daemon.url + "/api/health", { headers: { Origin: tailnet.origin } }))
         .status,
       403,
-      "the tailnet origin does not pass through the loopback host",
+      "the tailnet origin does not pass through the loopback listener",
     );
   } finally {
     await daemon.close();
@@ -623,16 +642,21 @@ test("tailnet front requires the allowed Tailscale user and its own origin", asy
   }
 });
 test("tailnet settings come in pairs and need a bare https origin", () => {
-  assert.equal(tailnetFromEnv(undefined, undefined), undefined);
-  assert.deepEqual(tailnetFromEnv("https://box.example.ts.net:7433/", "me@example.com"), {
+  // Explicit "" keeps exported MCPROXY_TAILNET_* values out of the defaults.
+  const user = "me@example.com";
+  assert.equal(tailnetFromEnv("", "", ""), undefined);
+  assert.deepEqual(tailnetFromEnv("https://box.example.ts.net:7433/", user, ""), {
     origin: "https://box.example.ts.net:7433",
-    user: "me@example.com",
+    user,
+    port: 7434,
   });
-  assert.throws(() => tailnetFromEnv("https://box.example.ts.net", undefined));
-  assert.throws(() => tailnetFromEnv(undefined, "me@example.com"));
-  assert.throws(() => tailnetFromEnv("http://box.example.ts.net", "me@example.com"));
-  assert.throws(() => tailnetFromEnv("https://box.example.ts.net/ui", "me@example.com"));
-  assert.throws(() => tailnetFromEnv("box.example.ts.net", "me@example.com"));
+  assert.equal(tailnetFromEnv("https://box.example.ts.net", user, "9000")?.port, 9000);
+  assert.throws(() => tailnetFromEnv("https://box.example.ts.net", "", ""));
+  assert.throws(() => tailnetFromEnv("", user, ""));
+  assert.throws(() => tailnetFromEnv("http://box.example.ts.net", user, ""));
+  assert.throws(() => tailnetFromEnv("https://box.example.ts.net/ui", user, ""));
+  assert.throws(() => tailnetFromEnv("box.example.ts.net", user, ""));
+  assert.throws(() => tailnetFromEnv("https://box.example.ts.net", user, "70000"));
 });
 test("profile updates keep endpoints stable, validate compatibility, test only initialization and cascade deletion", async () => {
   const env = await setup();
