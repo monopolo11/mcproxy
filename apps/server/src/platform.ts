@@ -28,13 +28,56 @@ export const fileCredentials: CredentialStore = {
   },
 };
 export const defaultPort = 7433;
-/** The daemon's port: PORT when set, else the default. Throws on an invalid value. */
-export function portFromEnv(value = process.env.PORT): number {
-  if (!value) return defaultPort;
+/** Default loopback port of the listener that `tailscale serve` forwards to. */
+export const defaultTailnetPort = 7434;
+function parsePort(value: string | undefined, fallback: number, name: string) {
+  if (!value) return fallback;
   const port = Number(value);
   if (!Number.isInteger(port) || port < 1 || port > 65535)
-    throw new Error("PORT must be between 1 and 65535");
+    throw new Error(`${name} must be between 1 and 65535`);
   return port;
+}
+/** The daemon's port: PORT when set, else the default. Throws on an invalid value. */
+export function portFromEnv(value = process.env.PORT): number {
+  return parsePort(value, defaultPort, "PORT");
+}
+/**
+ * A `tailscale serve` front for the daemon. It forwards to a loopback listener
+ * on `port`, separate from the daemon's own, so only requests arriving there
+ * are tailnet requests. Those need Host and Origin from `origin` and serve's
+ * `Tailscale-User-Login` equal to `user`.
+ */
+export interface Tailnet {
+  origin: string;
+  user: string;
+  port: number;
+}
+/**
+ * The tailnet front from MCPROXY_TAILNET_ORIGIN, MCPROXY_TAILNET_USER and the
+ * optional MCPROXY_TAILNET_PORT, or undefined when origin and user are unset.
+ * Throws when only one is set, the origin is not a bare https origin, or the
+ * port is invalid.
+ */
+export function tailnetFromEnv(
+  origin = process.env.MCPROXY_TAILNET_ORIGIN,
+  user = process.env.MCPROXY_TAILNET_USER,
+  port = process.env.MCPROXY_TAILNET_PORT,
+): Tailnet | undefined {
+  if (!origin && !user) return undefined;
+  if (!origin || !user)
+    throw new Error(
+      "MCPROXY_TAILNET_ORIGIN and MCPROXY_TAILNET_USER must be set together",
+    );
+  const url = URL.canParse(origin) ? new URL(origin) : undefined;
+  if (url?.protocol !== "https:" || url.origin !== origin.replace(/\/$/, ""))
+    throw new Error(
+      "MCPROXY_TAILNET_ORIGIN must be an https origin, e.g. https://box.example.ts.net",
+    );
+  return {
+    origin: url.origin,
+    user,
+    port: parsePort(port, defaultTailnetPort, "MCPROXY_TAILNET_PORT"),
+  };
 }
 export const localPlatform: Platform = {
   stateDirectory: () =>
